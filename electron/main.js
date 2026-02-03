@@ -202,9 +202,36 @@ async function checkYtdlp() {
   })
 }
 
+// 根据 URL 查找匹配的自定义规则
+function findMatchingRule(url) {
+  const rules = loadCustomRules()
+  for (const rule of rules) {
+    if (!rule.enabled) continue
+    try {
+      // 尝试匹配 URL 模式
+      if (rule.urlPattern) {
+        const regex = new RegExp(rule.urlPattern, 'i')
+        if (regex.test(url)) {
+          return rule
+        }
+      }
+      // 尝试匹配域名
+      if (rule.domain && rule.domain !== '*') {
+        if (url.toLowerCase().includes(rule.domain.toLowerCase())) {
+          return rule
+        }
+      }
+    } catch (e) {
+      console.error('规则匹配错误:', e)
+    }
+  }
+  return null
+}
+
 // 解析视频信息
 async function parseVideoInfo(url) {
   const config = loadConfig()
+  const matchedRule = findMatchingRule(url)
   
   return new Promise((resolve, reject) => {
     // 判断是否为播放列表URL
@@ -240,7 +267,14 @@ async function parseVideoInfo(url) {
       args.push('--cookies-from-browser', config.cookiesFromBrowser)
     }
 
-    // 自定义参数
+    // 应用匹配规则中的自定义 yt-dlp 参数
+    if (matchedRule && matchedRule.ytdlpArgs) {
+      const ruleArgsArray = matchedRule.ytdlpArgs.split(/\s+/).filter(arg => arg.trim())
+      args.push(...ruleArgsArray)
+      console.log('应用规则参数:', matchedRule.name, '->', matchedRule.ytdlpArgs)
+    }
+
+    // 全局自定义参数
     if (config.customArgs) {
       const customArgsArray = config.customArgs.split(/\s+/).filter(arg => arg.trim())
       args.push(...customArgsArray)
@@ -307,6 +341,12 @@ async function parseVideoInfo(url) {
           errorMsg = '此视频因版权原因无法下载'
         } else if (errorMsg.includes('cookies')) {
           errorMsg = 'Cookie 无效或已过期，请重新导入'
+        } else if (errorMsg.includes('Requested format is not available')) {
+          errorMsg = 'YouTube 视频需要登录访问。请前往"设置"页面，在"从浏览器获取 Cookie"中选择 Firefox 或 Chrome，然后在浏览器中登录 YouTube 后重试'
+        } else if (errorMsg.includes('HTTP Error 403') || errorMsg.includes('Forbidden')) {
+          errorMsg = 'YouTube 拒绝访问（403 Forbidden）。请在"设置"中启用"从浏览器获取 Cookie"功能，选择 Firefox 或 Chrome，确保浏览器已登录 YouTube'
+        } else if (errorMsg.includes('HTTP Error 400')) {
+          errorMsg = 'YouTube 请求无效（400 Bad Request）。请更新 yt-dlp 到最新版本，并在设置中配置浏览器 Cookie'
         }
         
         reject(new Error(errorMsg))
@@ -369,6 +409,7 @@ async function getFormats(url) {
 // 下载视频
 function downloadVideo(task, onProgress) {
   const config = loadConfig()
+  const matchedRule = findMatchingRule(task.url)
   
   return new Promise((resolve, reject) => {
     // 生成文件名
@@ -402,29 +443,34 @@ function downloadVideo(task, onProgress) {
       args.push('-r', config.rateLimit)
     }
 
-    // 格式选择
-    if (task.format) {
-      if (task.format === 'bestaudio') {
-        // 仅音频 - 提取并转换
-        args.push('-x')
-        args.push('--audio-format', config.audioFormat || 'mp3')
-        args.push('--audio-quality', config.audioQuality || '0')
-      } else if (task.format === 'bestvideo') {
-        // 仅视频（不合并音频）
-        args.push('-f', 'bestvideo')
-      } else if (task.format === 'best') {
-        // 最佳质量 - 选择最高质量视频+音频
-        // 使用 yt-dlp 默认排序逻辑选择最佳质量
-        args.push('-f', 'bestvideo+bestaudio/best')
+    // 格式选择 - 优先使用 formatId（实际的格式ID）
+    const formatId = task.formatId || task.format
+    
+    if (task.format === 'bestaudio') {
+      // 仅音频 - 提取并转换
+      args.push('-x')
+      args.push('--audio-format', config.audioFormat || 'mp3')
+      args.push('--audio-quality', config.audioQuality || '0')
+    } else if (task.format === 'bestvideo') {
+      // 仅视频（不合并音频）
+      if (formatId && formatId !== 'bestvideo') {
+        args.push('-f', formatId)
       } else {
-        // 具体的 format_id - 检查是否为纯视频格式，如果是则自动合并最佳音频
-        // format_id 通常是数字，如 30080, 100026 等
-        if (/^\d+$/.test(task.format)) {
-          // 数字格式ID，添加最佳音频合并
-          args.push('-f', `${task.format}+bestaudio/best`)
-        } else {
-          args.push('-f', task.format)
-        }
+        args.push('-f', 'bestvideo')
+      }
+    } else if (task.format === 'best') {
+      // 最佳质量 - 使用实际的格式ID + 最佳音频合并
+      if (formatId && formatId !== 'best') {
+        args.push('-f', `${formatId}+bestaudio/best`)
+      } else {
+        args.push('-f', 'bestvideo+bestaudio/best')
+      }
+    } else if (formatId) {
+      // 具体的 format_id - 自动合并最佳音频
+      if (/^\d+$/.test(formatId)) {
+        args.push('-f', `${formatId}+bestaudio/best`)
+      } else {
+        args.push('-f', formatId)
       }
     }
 
@@ -470,7 +516,14 @@ function downloadVideo(task, onProgress) {
       args.push('--no-check-certificate')
     }
 
-    // 自定义参数
+    // 应用匹配规则中的自定义 yt-dlp 参数
+    if (matchedRule && matchedRule.ytdlpArgs) {
+      const ruleArgsArray = matchedRule.ytdlpArgs.split(/\s+/).filter(arg => arg.trim())
+      args.push(...ruleArgsArray)
+      console.log('下载应用规则参数:', matchedRule.name, '->', matchedRule.ytdlpArgs)
+    }
+
+    // 全局自定义参数
     if (config.customArgs) {
       const customArgsArray = config.customArgs.split(/\s+/).filter(arg => arg.trim())
       args.push(...customArgsArray)
@@ -811,7 +864,67 @@ app.whenReady().then(() => {
       return { success: false, error: error.message }
     }
   })
+
+  // 按标题精确匹配删除下载目录中的视频文件
+  ipcMain.handle('file:deleteByTitle', async (_, title) => {
+    const config = loadConfig()
+    const downloadPath = config.downloadPath
+    const deletedFiles = []
+    
+    if (!title) {
+      return { deleted: false, deletedFiles: [], error: '标题为空' }
+    }
+    
+    // 清理标题中的非法字符（与下载时的处理保持一致）
+    const cleanTitle = title.replace(/[<>:"/\\|?*]/g, '_')
+    
+    // 支持的视频/音频扩展名
+    const extensions = ['mp4', 'mkv', 'webm', 'mp3', 'm4a', 'flv', 'avi', 'mov', 'opus', 'aac', 'wav', 'flac']
+    
+    try {
+      if (!fs.existsSync(downloadPath)) {
+        return { deleted: false, deletedFiles: [], error: '下载目录不存在' }
+      }
+      
+      const files = fs.readdirSync(downloadPath)
+      
+      for (const file of files) {
+        // 获取文件名（不含扩展名）
+        const ext = path.extname(file).toLowerCase().slice(1)
+        const basename = path.basename(file, path.extname(file))
+        
+        // 检查扩展名是否是支持的类型
+        if (!extensions.includes(ext)) continue
+        
+        // 精确匹配文件名（包括可能的时间戳后缀）
+        // 匹配规则：完全匹配标题，或者 标题_时间戳 格式
+        if (basename === cleanTitle || basename.match(new RegExp(`^${escapeRegExp(cleanTitle)}_\\d+$`))) {
+          const fullPath = path.join(downloadPath, file)
+          try {
+            fs.unlinkSync(fullPath)
+            deletedFiles.push(file)
+            console.log('已删除文件:', fullPath)
+          } catch (e) {
+            console.error('删除文件失败:', fullPath, e)
+          }
+        }
+      }
+      
+      return { 
+        deleted: deletedFiles.length > 0, 
+        deletedFiles 
+      }
+    } catch (error) {
+      console.error('删除文件异常:', error)
+      return { deleted: false, deletedFiles: [], error: error.message }
+    }
+  })
 })
+
+// 转义正则表达式特殊字符
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

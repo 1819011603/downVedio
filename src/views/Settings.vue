@@ -47,9 +47,9 @@
           </div>
           <div class="setting-control">
             <select class="input select" v-model="config.defaultFormat">
-              <option value="best">最佳质量</option>
-              <option value="bestvideo+bestaudio">视频+音频</option>
-              <option value="audio">仅音频 (MP3)</option>
+              <option value="best">视频+音频（最佳质量）</option>
+              <option value="bestvideo">仅视频</option>
+              <option value="bestaudio">仅音频</option>
             </select>
           </div>
         </div>

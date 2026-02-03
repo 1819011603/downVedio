@@ -1,5 +1,40 @@
 <template>
   <div class="queue-view">
+    <!-- 删除确认弹窗 -->
+    <Teleport to="body">
+      <div v-if="appStore.deleteConfirmDialog.visible" class="modal-overlay" @click.self="handleDeleteCancel">
+        <div class="delete-confirm-dialog animate-fadeIn">
+          <div class="dialog-header">
+            <svg viewBox="0 0 24 24" width="24" height="24" class="dialog-icon">
+              <polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            <h3>确认删除</h3>
+          </div>
+          <div class="dialog-content">
+            <p class="task-title-hint">{{ appStore.deleteConfirmDialog.taskTitle }}</p>
+            <p class="dialog-question">是否同时删除本地已下载的视频文件？</p>
+            <p class="dialog-note">（将在下载目录中查找文件名完全匹配的文件）</p>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="handleDeleteCancel">
+              取消
+            </button>
+            <button class="btn btn-outline" @click="handleDeleteKeepFile">
+              仅移除任务
+            </button>
+            <button class="btn btn-danger" @click="handleDeleteWithFile">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+              删除任务和文件
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    
     <header class="page-header">
       <div class="header-left">
         <h1 class="page-title">
@@ -233,6 +268,22 @@
               </svg>
             </button>
             
+            <!-- 复制解析命令 -->
+            <button v-if="task.status !== 'downloading'" class="btn btn-icon" @click="copyParseCommand(task)" title="复制解析命令">
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" fill="none"/>
+                <line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </button>
+            
+            <!-- 复制下载命令 -->
+            <button v-if="task.status !== 'downloading'" class="btn btn-icon" @click="copyDownloadCommand(task)" title="复制下载命令">
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+            
             <!-- 移除/取消按钮 -->
             <button v-if="task.status !== 'downloading'" class="btn btn-icon btn-danger" @click="removeTask(task.id)" title="移除">
               <svg viewBox="0 0 24 24" width="18" height="18">
@@ -298,8 +349,35 @@ const getFormatLabel = (format) => {
 const pauseTask = (taskId) => appStore.pauseTask(taskId)
 const resumeTask = (taskId) => appStore.resumeTask(taskId)
 const cancelTask = (taskId) => appStore.cancelTask(taskId)
-const removeTask = (taskId) => appStore.removeFromQueue(taskId)
 const clearCompleted = () => appStore.clearCompleted()
+
+// 删除任务（显示确认弹窗）
+const removeTask = async (taskId) => {
+  const task = appStore.downloadQueue.find(t => t.id === taskId)
+  if (!task) return
+  
+  // 显示删除确认弹窗
+  appStore.showDeleteConfirmDialog(taskId, task.title || '未知视频')
+}
+
+// 取消删除
+const handleDeleteCancel = () => {
+  appStore.handleDeleteConfirmChoice('cancel')
+}
+
+// 仅移除任务（保留本地文件）
+const handleDeleteKeepFile = () => {
+  const taskId = appStore.deleteConfirmDialog.taskId
+  appStore.handleDeleteConfirmChoice('keepFile')
+  appStore.removeFromQueue(taskId, false)
+}
+
+// 删除任务并删除本地文件
+const handleDeleteWithFile = () => {
+  const taskId = appStore.deleteConfirmDialog.taskId
+  appStore.handleDeleteConfirmChoice('deleteFile')
+  appStore.removeFromQueue(taskId, true)
+}
 
 // 重试任务 - 跳转到首页重新解析
 const retryTask = (task) => {
@@ -345,6 +423,145 @@ const copyLink = async (url) => {
   try {
     await navigator.clipboard.writeText(url)
     appStore.showToast('链接已复制', 'success')
+  } catch (e) {
+    appStore.showToast('复制失败', 'error')
+  }
+}
+
+// 生成解析命令
+const generateParseCommand = (task) => {
+  const config = appStore.config
+  let args = ['yt-dlp', '--dump-json', '--no-download']
+  
+  // 代理
+  if (config.proxy) {
+    args.push('--proxy', config.proxy)
+  }
+  
+  // Cookie
+  if (config.cookieFile) {
+    args.push('--cookies', `"${config.cookieFile}"`)
+  } else if (config.cookiesFromBrowser && config.cookiesFromBrowser !== 'none') {
+    args.push('--cookies-from-browser', config.cookiesFromBrowser)
+  }
+  
+  // 自定义参数
+  if (config.customArgs) {
+    args.push(config.customArgs)
+  }
+  
+  args.push(`"${task.url}"`)
+  
+  return args.join(' ')
+}
+
+// 生成下载命令
+const generateDownloadCommand = (task) => {
+  const config = appStore.config
+  let args = ['yt-dlp']
+  
+  // 输出路径
+  const outputTemplate = config.namingTemplate
+    .replace('{title}', '%(title)s')
+    .replace('{id}', '%(id)s')
+    .replace('{index}', '%(playlist_index)s')
+    .replace('{uploader}', '%(uploader)s')
+    .replace('{date}', '%(upload_date)s')
+  args.push('-o', `"${config.downloadPath}/${outputTemplate}.%(ext)s"`)
+  
+  // 下载线程数
+  if (config.downloadThreads && config.downloadThreads > 1) {
+    args.push('-N', String(config.downloadThreads))
+  }
+  
+  // 限速
+  if (config.rateLimit) {
+    args.push('-r', config.rateLimit)
+  }
+  
+  // 格式选择 - 优先使用保存的 formatId
+  const formatId = task.formatId || task.format
+  
+  if (task.format === 'bestaudio') {
+    // 仅音频
+    args.push('-x')
+    args.push('--audio-format', config.audioFormat || 'mp3')
+    args.push('--audio-quality', config.audioQuality || '0')
+  } else if (task.format === 'bestvideo') {
+    // 仅视频
+    if (formatId && formatId !== 'bestvideo') {
+      args.push('-f', formatId)
+    } else {
+      args.push('-f', 'bestvideo')
+    }
+  } else if (task.format === 'best') {
+    // 最佳质量：使用实际的格式ID + 最佳音频
+    if (formatId && formatId !== 'best') {
+      args.push('-f', `${formatId}+bestaudio/best`)
+    } else {
+      args.push('-f', 'bestvideo+bestaudio/best')
+    }
+  } else if (formatId) {
+    // 具体格式ID
+    args.push('-f', `${formatId}+bestaudio/best`)
+  } else {
+    // 默认最佳质量
+    args.push('-f', 'bestvideo+bestaudio/best')
+  }
+  
+  // 字幕
+  if (config.downloadSubtitles) {
+    args.push('--write-subs')
+    args.push('--sub-lang', config.subtitleLang || 'zh,en')
+    if (config.embedSubtitles) {
+      args.push('--embed-subs')
+    }
+  }
+  
+  // 嵌入封面
+  if (config.embedThumbnail) {
+    args.push('--embed-thumbnail')
+  }
+  
+  // 代理
+  if (config.proxy) {
+    args.push('--proxy', config.proxy)
+  }
+  
+  // Cookie
+  if (config.cookieFile) {
+    args.push('--cookies', `"${config.cookieFile}"`)
+  } else if (config.cookiesFromBrowser && config.cookiesFromBrowser !== 'none') {
+    args.push('--cookies-from-browser', config.cookiesFromBrowser)
+  }
+  
+  // 自定义参数
+  if (config.customArgs) {
+    args.push(config.customArgs)
+  }
+  
+  args.push(`"${task.url}"`)
+  
+  return args.join(' ')
+}
+
+// 复制解析命令
+const copyParseCommand = async (task) => {
+  try {
+    const command = generateParseCommand(task)
+    await navigator.clipboard.writeText(command)
+    appStore.showToast('解析命令已复制', 'success')
+  } catch (e) {
+    appStore.showToast('复制失败', 'error')
+  }
+}
+
+// 复制下载命令
+const copyDownloadCommand = async (task) => {
+  try {
+    const command = generateDownloadCommand(task)
+    await navigator.clipboard.writeText(command)
+    appStore.showToast('下载命令已复制', 'success')
   } catch (e) {
     appStore.showToast('复制失败', 'error')
   }
@@ -774,5 +991,105 @@ const copyErrorInfo = async (task) => {
 
 .task-move {
   transition: transform 0.3s ease;
+}
+
+// 删除确认弹窗
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.delete-confirm-dialog {
+  width: 420px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+  background: rgba(255, 71, 87, 0.1);
+  border-bottom: 1px solid var(--border);
+  
+  .dialog-icon {
+    color: var(--error);
+  }
+  
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+}
+
+.dialog-content {
+  padding: var(--spacing-lg);
+  
+  .task-title-hint {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-dark);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .dialog-question {
+    font-size: 15px;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+  }
+  
+  .dialog-note {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--bg-dark);
+  border-top: 1px solid var(--border);
+  
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    
+    &:hover {
+      border-color: var(--border-light);
+      color: var(--text-primary);
+    }
+  }
+  
+  .btn-danger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--error);
+    color: white;
+    
+    &:hover {
+      background: #e63946;
+    }
+  }
 }
 </style>

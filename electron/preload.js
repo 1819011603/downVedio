@@ -43,5 +43,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkFileExists: (task) => ipcRenderer.invoke('file:checkExists', task),
   deleteFile: (filePath) => ipcRenderer.invoke('file:delete', filePath),
   getDownloadedPath: (task) => ipcRenderer.invoke('file:getDownloadedPath', task),
-  openFile: (filePath) => ipcRenderer.invoke('shell:openFile', filePath)
+  openFile: (filePath) => ipcRenderer.invoke('shell:openFile', filePath),
+  deleteVideoByTitle: (title) => ipcRenderer.invoke('file:deleteByTitle', title)
 })

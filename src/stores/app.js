@@ -36,7 +36,8 @@ const api = {
   checkFileExists: (task) => isElectron() ? window.electronAPI.checkFileExists(task) : Promise.resolve({ exists: false }),
   deleteFile: (filePath) => isElectron() ? window.electronAPI.deleteFile(filePath) : Promise.resolve({ success: true }),
   getDownloadedPath: (task) => isElectron() ? window.electronAPI.getDownloadedPath(task) : Promise.resolve({ found: false }),
-  openFile: (filePath) => isElectron() ? window.electronAPI.openFile(filePath) : Promise.resolve({ success: false })
+  openFile: (filePath) => isElectron() ? window.electronAPI.openFile(filePath) : Promise.resolve({ success: false }),
+  deleteVideoByTitle: (title) => isElectron() ? window.electronAPI.deleteVideoByTitle(title) : Promise.resolve({ deleted: false, deletedFiles: [] })
 }
 
 export const useAppStore = defineStore('app', () => {
@@ -74,12 +75,30 @@ export const useAppStore = defineStore('app', () => {
   const downloadQueue = ref([])
   const currentDownload = ref(null)
   
+  // 解析结果持久化状态（切换页面后保留）
+  const parsedResult = ref({
+    url: '',
+    videoInfo: null,
+    isPlaylist: false,
+    selectedFormat: 'best',
+    formatType: 'video',
+    selectedItems: []
+  })
+  
   // 文件存在弹窗状态
   const fileExistsDialog = ref({
     visible: false,
     filename: '',
     fullPath: '',
     taskId: null,
+    resolve: null
+  })
+  
+  // 删除确认弹窗状态
+  const deleteConfirmDialog = ref({
+    visible: false,
+    taskId: null,
+    taskTitle: '',
     resolve: null
   })
   
@@ -327,11 +346,69 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  // 从队列移除
-  function removeFromQueue(taskId) {
+  // 从队列移除（带删除本地文件确认）
+  async function removeFromQueue(taskId, deleteLocalFile = false) {
+    const task = downloadQueue.value.find(t => t.id === taskId)
     const index = downloadQueue.value.findIndex(t => t.id === taskId)
+    
     if (index > -1) {
+      // 如果需要删除本地文件
+      if (deleteLocalFile && task) {
+        try {
+          const plainTask = JSON.parse(JSON.stringify(toRaw(task)))
+          const result = await api.deleteVideoByTitle(plainTask.title)
+          if (result.deleted && result.deletedFiles.length > 0) {
+            showToast(`已删除 ${result.deletedFiles.length} 个本地文件`, 'success')
+          } else if (!result.deleted) {
+            showToast('未找到匹配的本地文件', 'info')
+          }
+        } catch (error) {
+          showToast('删除本地文件失败: ' + error.message, 'error')
+        }
+      }
       downloadQueue.value.splice(index, 1)
+    }
+  }
+  
+  // 显示删除确认弹窗
+  function showDeleteConfirmDialog(taskId, taskTitle) {
+    return new Promise((resolve) => {
+      deleteConfirmDialog.value = {
+        visible: true,
+        taskId,
+        taskTitle,
+        resolve
+      }
+    })
+  }
+  
+  // 处理删除确认弹窗的选择
+  function handleDeleteConfirmChoice(choice) {
+    if (deleteConfirmDialog.value.resolve) {
+      deleteConfirmDialog.value.resolve(choice)
+    }
+    deleteConfirmDialog.value = {
+      visible: false,
+      taskId: null,
+      taskTitle: '',
+      resolve: null
+    }
+  }
+  
+  // 保存解析结果
+  function saveParsedResult(data) {
+    parsedResult.value = { ...parsedResult.value, ...data }
+  }
+  
+  // 清空解析结果
+  function clearParsedResult() {
+    parsedResult.value = {
+      url: '',
+      videoInfo: null,
+      isPlaylist: false,
+      selectedFormat: 'best',
+      formatType: 'video',
+      selectedItems: []
     }
   }
 
@@ -345,8 +422,10 @@ export const useAppStore = defineStore('app', () => {
   // 保存自定义规则
   async function saveRules(rules) {
     try {
-      await api.saveRules(rules)
-      customRules.value = rules
+      // 将响应式对象转换为普通对象，确保可以通过 IPC 序列化
+      const plainRules = JSON.parse(JSON.stringify(toRaw(rules)))
+      await api.saveRules(plainRules)
+      customRules.value = plainRules
       showToast('规则已保存', 'success')
     } catch (error) {
       showToast('保存规则失败: ' + error.message, 'error')
@@ -397,6 +476,8 @@ export const useAppStore = defineStore('app', () => {
     downloadQueue,
     currentDownload,
     fileExistsDialog,
+    deleteConfirmDialog,
+    parsedResult,
     
     // 计算属性
     queueCount,
@@ -419,6 +500,10 @@ export const useAppStore = defineStore('app', () => {
     showToast,
     removeToast,
     handleFileExistsChoice,
+    showDeleteConfirmDialog,
+    handleDeleteConfirmChoice,
+    saveParsedResult,
+    clearParsedResult,
     
     // API helpers
     api

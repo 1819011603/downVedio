@@ -59,12 +59,45 @@
       <div class="error-content">
         <h3>解析失败</h3>
         <p>{{ parseError }}</p>
-        <button class="btn btn-secondary" @click="goToRules">
-          <svg viewBox="0 0 24 24" width="16" height="16">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="2" fill="none"/>
-          </svg>
-          添加自定义规则
-        </button>
+        
+        <!-- YouTube Cookie 配置提示 -->
+        <div v-if="isYouTubeError" class="youtube-hint">
+          <div class="hint-header">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" stroke-width="2" fill="none"/>
+              <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span>如何解决 YouTube 403 错误？</span>
+          </div>
+          <ol class="hint-steps">
+            <li>在 <strong>Firefox 或 Chrome</strong> 浏览器中登录 YouTube</li>
+            <li>打开视频下载器的 <strong>"设置"</strong> 页面</li>
+            <li>找到 <strong>"从浏览器获取 Cookie"</strong> 选项</li>
+            <li>选择你登录的浏览器（Firefox 或 Chrome）</li>
+            <li>点击 <strong>"保存设置"</strong> 后重新尝试下载</li>
+          </ol>
+        </div>
+        
+        <div class="error-actions">
+          <button class="btn btn-icon-text" @click="copyError" :title="errorCopied ? '已复制' : '复制错误信息'">
+            <svg v-if="!errorCopied" viewBox="0 0 24 24" width="16" height="16">
+              <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16">
+              <polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            {{ errorCopied ? '已复制' : '复制错误' }}
+          </button>
+          <button class="btn btn-secondary" @click="goToSettings">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            前往设置
+          </button>
+        </div>
       </div>
     </div>
     
@@ -217,6 +250,20 @@
         </div>
         
         <div class="video-actions">
+          <div class="action-buttons-row">
+            <button class="btn btn-icon" @click="copyParseCommand" title="复制解析命令">
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" fill="none"/>
+                <line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </button>
+            <button class="btn btn-icon" @click="copyDownloadCommand" title="复制下载命令">
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+          </div>
           <button class="btn btn-primary" @click="addToDownload">
             <svg viewBox="0 0 24 24" width="18" height="18">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" stroke-width="2" fill="none"/>
@@ -323,7 +370,7 @@
 </template>
 
 <script setup>
-import { ref, computed, h, onMounted } from 'vue'
+import { ref, computed, h, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
@@ -333,17 +380,6 @@ const appStore = useAppStore()
 
 // 状态
 const url = ref('')
-
-// 检查路由参数，自动解析
-onMounted(() => {
-  if (route.query.url) {
-    url.value = route.query.url
-    // 清除查询参数
-    router.replace({ path: '/', query: {} })
-    // 自动开始解析
-    setTimeout(() => parseUrl(), 100)
-  }
-})
 const parsing = ref(false)
 const parseError = ref('')
 const videoInfo = ref(null)
@@ -352,6 +388,71 @@ const selectedFormat = ref('best')
 const formatType = ref('video') // video, video-only, audio
 const selectedItems = ref(new Set())
 const thumbnailError = ref(false)
+const errorCopied = ref(false)
+
+// 检查路由参数，或恢复之前的解析结果
+onMounted(() => {
+  if (route.query.url) {
+    url.value = route.query.url
+    // 清除查询参数
+    router.replace({ path: '/', query: {} })
+    // 自动开始解析
+    setTimeout(() => parseUrl(), 100)
+  } else {
+    // 恢复之前的解析结果
+    restoreParsedResult()
+  }
+})
+
+// 恢复之前的解析结果
+function restoreParsedResult() {
+  const saved = appStore.parsedResult
+  if (saved.videoInfo) {
+    url.value = saved.url
+    videoInfo.value = saved.videoInfo
+    isPlaylist.value = saved.isPlaylist
+    selectedFormat.value = saved.selectedFormat
+    formatType.value = saved.formatType
+    selectedItems.value = new Set(saved.selectedItems)
+  } else {
+    // 没有保存的结果时，使用设置中的默认格式
+    applyDefaultFormat()
+  }
+}
+
+// 应用设置中的默认格式
+function applyDefaultFormat() {
+  const defaultFormat = appStore.config.defaultFormat
+  if (defaultFormat === 'best') {
+    formatType.value = 'video'
+    selectedFormat.value = 'best'
+  } else if (defaultFormat === 'bestvideo') {
+    formatType.value = 'video-only'
+    selectedFormat.value = 'bestvideo'
+  } else if (defaultFormat === 'bestaudio') {
+    formatType.value = 'audio'
+    selectedFormat.value = 'bestaudio'
+  }
+}
+
+// 保存解析结果到 store
+function saveParsedResultToStore() {
+  appStore.saveParsedResult({
+    url: url.value,
+    videoInfo: videoInfo.value,
+    isPlaylist: isPlaylist.value,
+    selectedFormat: selectedFormat.value,
+    formatType: formatType.value,
+    selectedItems: Array.from(selectedItems.value)
+  })
+}
+
+// 监听状态变化，自动保存
+watch([videoInfo, selectedFormat, formatType, selectedItems], () => {
+  if (videoInfo.value) {
+    saveParsedResultToStore()
+  }
+}, { deep: true })
 
 // 图标组件
 const IconVideo = {
@@ -387,6 +488,17 @@ const formatTypes = [
 const availableFormats = computed(() => {
   if (!videoInfo.value || !videoInfo.value.formats) return []
   return videoInfo.value.formats || []
+})
+
+// 判断是否为 YouTube 相关错误
+const isYouTubeError = computed(() => {
+  if (!parseError.value) return false
+  const error = parseError.value.toLowerCase()
+  return error.includes('youtube') || 
+         error.includes('403') || 
+         error.includes('forbidden') || 
+         error.includes('cookie') ||
+         error.includes('requested format is not available')
 })
 
 // 获取文件大小（支持 filesize 和 filesize_approx）
@@ -488,8 +600,9 @@ const parseUrl = async () => {
   videoInfo.value = null
   selectedItems.value = new Set()
   thumbnailError.value = false
-  formatType.value = 'video'
-  selectedFormat.value = 'best'
+  
+  // 使用设置中的默认格式
+  applyDefaultFormat()
   
   try {
     const result = await appStore.parseVideo(url.value.trim())
@@ -540,10 +653,33 @@ const clearResult = () => {
   videoInfo.value = null
   parseError.value = ''
   url.value = ''
+  isPlaylist.value = false
+  selectedItems.value = new Set()
+  selectedFormat.value = 'best'
+  formatType.value = 'video'
+  // 同时清空 store 中保存的解析结果
+  appStore.clearParsedResult()
 }
 
 const goToRules = () => {
   router.push('/rules')
+}
+
+const goToSettings = () => {
+  router.push('/settings')
+}
+
+const copyError = async () => {
+  try {
+    await navigator.clipboard.writeText(parseError.value)
+    errorCopied.value = true
+    appStore.showToast('错误信息已复制到剪贴板', 'success')
+    setTimeout(() => {
+      errorCopied.value = false
+    }, 2000)
+  } catch (err) {
+    appStore.showToast('复制失败', 'error')
+  }
 }
 
 const selectAll = () => {
@@ -570,6 +706,16 @@ const addToDownload = () => {
   // 获取选中格式的信息
   const formatInfo = selectedFormatInfo.value || bestVideoInfo.value
   
+  // 确定实际使用的 format_id
+  let actualFormatId = selectedFormat.value
+  if (selectedFormat.value === 'best' && bestVideoInfo.value?.format_id) {
+    actualFormatId = bestVideoInfo.value.format_id
+  } else if (selectedFormat.value === 'bestvideo' && bestVideoInfo.value?.format_id) {
+    actualFormatId = bestVideoInfo.value.format_id
+  } else if (selectedFormat.value === 'bestaudio' && bestAudioInfo.value?.format_id) {
+    actualFormatId = bestAudioInfo.value.format_id
+  }
+  
   appStore.addToQueue({
     url: url.value,
     title: videoInfo.value.title,
@@ -577,6 +723,7 @@ const addToDownload = () => {
     duration: videoInfo.value.duration,
     uploader: videoInfo.value.uploader,
     format: selectedFormat.value,
+    formatId: actualFormatId,  // 保存实际的 format_id
     resolution: formatInfo?.resolution || (formatInfo?.height ? `${formatInfo.height}p` : ''),
     filesize: formatInfo ? getFileSize(formatInfo) : 0
   })
@@ -642,6 +789,140 @@ const truncateText = (text, maxLength) => {
   if (!text) return ''
   if (text.length <= maxLength) return text
   return text.substring(0, maxLength) + '...'
+}
+
+// 生成解析命令
+const generateParseCommand = () => {
+  const config = appStore.config
+  let args = ['yt-dlp', '--dump-json', '--no-download']
+  
+  // 代理
+  if (config.proxy) {
+    args.push('--proxy', config.proxy)
+  }
+  
+  // Cookie
+  if (config.cookieFile) {
+    args.push('--cookies', `"${config.cookieFile}"`)
+  } else if (config.cookiesFromBrowser && config.cookiesFromBrowser !== 'none') {
+    args.push('--cookies-from-browser', config.cookiesFromBrowser)
+  }
+  
+  // 自定义参数
+  if (config.customArgs) {
+    args.push(config.customArgs)
+  }
+  
+  args.push(`"${url.value}"`)
+  
+  return args.join(' ')
+}
+
+// 生成下载命令
+const generateDownloadCommand = () => {
+  const config = appStore.config
+  let args = ['yt-dlp']
+  
+  // 输出路径
+  const outputTemplate = config.namingTemplate
+    .replace('{title}', '%(title)s')
+    .replace('{id}', '%(id)s')
+    .replace('{index}', '%(playlist_index)s')
+    .replace('{uploader}', '%(uploader)s')
+    .replace('{date}', '%(upload_date)s')
+  args.push('-o', `"${config.downloadPath}/${outputTemplate}.%(ext)s"`)
+  
+  // 下载线程数
+  if (config.downloadThreads && config.downloadThreads > 1) {
+    args.push('-N', String(config.downloadThreads))
+  }
+  
+  // 限速
+  if (config.rateLimit) {
+    args.push('-r', config.rateLimit)
+  }
+  
+  // 格式选择
+  if (selectedFormat.value === 'bestaudio') {
+    // 仅音频
+    args.push('-x')
+    args.push('--audio-format', config.audioFormat || 'mp3')
+    args.push('--audio-quality', config.audioQuality || '0')
+  } else if (selectedFormat.value === 'bestvideo') {
+    // 仅视频 - 使用实际的最佳视频格式ID
+    if (bestVideoInfo.value && bestVideoInfo.value.format_id) {
+      args.push('-f', bestVideoInfo.value.format_id)
+    } else {
+      args.push('-f', 'bestvideo')
+    }
+  } else if (selectedFormat.value === 'best') {
+    // 最佳质量：使用实际的最佳视频格式ID + 最佳音频
+    if (bestVideoInfo.value && bestVideoInfo.value.format_id) {
+      args.push('-f', `${bestVideoInfo.value.format_id}+bestaudio/best`)
+    } else {
+      args.push('-f', 'bestvideo+bestaudio/best')
+    }
+  } else {
+    // 具体格式ID
+    args.push('-f', `${selectedFormat.value}+bestaudio/best`)
+  }
+  
+  // 字幕
+  if (config.downloadSubtitles) {
+    args.push('--write-subs')
+    args.push('--sub-lang', config.subtitleLang || 'zh,en')
+    if (config.embedSubtitles) {
+      args.push('--embed-subs')
+    }
+  }
+  
+  // 嵌入封面
+  if (config.embedThumbnail) {
+    args.push('--embed-thumbnail')
+  }
+  
+  // 代理
+  if (config.proxy) {
+    args.push('--proxy', config.proxy)
+  }
+  
+  // Cookie
+  if (config.cookieFile) {
+    args.push('--cookies', `"${config.cookieFile}"`)
+  } else if (config.cookiesFromBrowser && config.cookiesFromBrowser !== 'none') {
+    args.push('--cookies-from-browser', config.cookiesFromBrowser)
+  }
+  
+  // 自定义参数
+  if (config.customArgs) {
+    args.push(config.customArgs)
+  }
+  
+  args.push(`"${url.value}"`)
+  
+  return args.join(' ')
+}
+
+// 复制解析命令
+const copyParseCommand = async () => {
+  try {
+    const command = generateParseCommand()
+    await navigator.clipboard.writeText(command)
+    appStore.showToast('解析命令已复制', 'success')
+  } catch (e) {
+    appStore.showToast('复制失败', 'error')
+  }
+}
+
+// 复制下载命令
+const copyDownloadCommand = async () => {
+  try {
+    const command = generateDownloadCommand()
+    await navigator.clipboard.writeText(command)
+    appStore.showToast('下载命令已复制', 'success')
+  } catch (e) {
+    appStore.showToast('复制失败', 'error')
+  }
 }
 </script>
 
@@ -779,6 +1060,78 @@ const truncateText = (text, maxLength) => {
     color: var(--text-secondary);
     margin-bottom: var(--spacing-md);
     font-family: var(--font-mono);
+    line-height: 1.6;
+    word-break: break-word;
+  }
+}
+
+.error-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.youtube-hint {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: rgba(0, 240, 255, 0.05);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  border-radius: var(--radius-md);
+}
+
+.hint-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: var(--spacing-sm);
+  
+  svg {
+    flex-shrink: 0;
+    color: var(--primary);
+  }
+}
+
+.hint-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  
+  li {
+    margin-bottom: 4px;
+    
+    strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+  }
+}
+
+.btn-icon-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+  
+  &:hover {
+    border-color: var(--border-light);
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+  
+  svg {
+    flex-shrink: 0;
   }
 }
 
@@ -1020,6 +1373,13 @@ const truncateText = (text, maxLength) => {
 .video-actions {
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.action-buttons-row {
+  display: flex;
+  gap: 4px;
   justify-content: flex-end;
 }
 

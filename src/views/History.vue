@@ -1,5 +1,40 @@
 <template>
   <div class="history-view">
+    <!-- 删除确认弹窗 -->
+    <Teleport to="body">
+      <div v-if="deleteDialog.visible" class="modal-overlay" @click.self="deleteDialog.visible = false">
+        <div class="delete-confirm-dialog animate-fadeIn">
+          <div class="dialog-header">
+            <svg viewBox="0 0 24 24" width="24" height="24" class="dialog-icon">
+              <polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            <h3>确认删除</h3>
+          </div>
+          <div class="dialog-content">
+            <p class="task-title-hint">{{ deleteDialog.title }}</p>
+            <p class="dialog-question">是否同时删除本地已下载的视频文件？</p>
+            <p class="dialog-note">（将在下载目录中查找文件名完全匹配的文件）</p>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="deleteDialog.visible = false">
+              取消
+            </button>
+            <button class="btn btn-outline" @click="confirmDeleteRecord(false)">
+              仅删除记录
+            </button>
+            <button class="btn btn-danger" @click="confirmDeleteRecord(true)">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+              删除记录和文件
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    
     <header class="page-header">
       <div class="header-left">
         <h1 class="page-title">
@@ -106,12 +141,19 @@
 </template>
 
 <script setup>
-import { toRaw } from 'vue'
+import { ref, reactive, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const appStore = useAppStore()
+
+// 删除确认弹窗状态
+const deleteDialog = reactive({
+  visible: false,
+  title: '',
+  item: null
+})
 
 const formatDate = (dateStr) => {
   if (!dateStr) return ''
@@ -205,13 +247,42 @@ const redownload = (item) => {
   router.push('/queue')
 }
 
-// 删除单条记录
+// 删除单条记录（显示确认弹窗）
 const deleteItem = (item) => {
+  deleteDialog.visible = true
+  deleteDialog.title = item.title || '未知视频'
+  deleteDialog.item = item
+}
+
+// 确认删除记录
+const confirmDeleteRecord = async (deleteLocalFile) => {
+  const item = deleteDialog.item
+  if (!item) return
+  
+  // 如果需要删除本地文件
+  if (deleteLocalFile && item.title) {
+    try {
+      const result = await appStore.api.deleteVideoByTitle(item.title)
+      if (result.deleted && result.deletedFiles.length > 0) {
+        appStore.showToast(`已删除 ${result.deletedFiles.length} 个本地文件`, 'success')
+      } else if (!result.deleted) {
+        appStore.showToast('未找到匹配的本地文件', 'info')
+      }
+    } catch (error) {
+      appStore.showToast('删除本地文件失败: ' + error.message, 'error')
+    }
+  }
+  
+  // 删除历史记录
   const index = appStore.history.findIndex(h => h.id === item.id || (h.url === item.url && h.downloadedAt === item.downloadedAt))
   if (index > -1) {
     appStore.history.splice(index, 1)
-    appStore.showToast('已删除', 'success')
+    appStore.showToast('记录已删除', 'success')
   }
+  
+  // 关闭弹窗
+  deleteDialog.visible = false
+  deleteDialog.item = null
 }
 
 const clearHistory = () => {
@@ -384,6 +455,106 @@ const clearHistory = () => {
       &:hover {
         background: rgba(255, 71, 87, 0.15);
       }
+    }
+  }
+}
+
+// 删除确认弹窗
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.delete-confirm-dialog {
+  width: 420px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+  background: rgba(255, 71, 87, 0.1);
+  border-bottom: 1px solid var(--border);
+  
+  .dialog-icon {
+    color: var(--error);
+  }
+  
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+}
+
+.dialog-content {
+  padding: var(--spacing-lg);
+  
+  .task-title-hint {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-dark);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .dialog-question {
+    font-size: 15px;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+  }
+  
+  .dialog-note {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--bg-dark);
+  border-top: 1px solid var(--border);
+  
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    
+    &:hover {
+      border-color: var(--border-light);
+      color: var(--text-primary);
+    }
+  }
+  
+  .btn-danger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--error);
+    color: white;
+    
+    &:hover {
+      background: #e63946;
     }
   }
 }

@@ -171,6 +171,32 @@
           </div>
           
           <div class="form-section">
+            <h4>yt-dlp 参数</h4>
+            
+            <div class="form-group">
+              <label>自定义 yt-dlp 参数</label>
+              <input 
+                type="text" 
+                class="input font-mono" 
+                v-model="rule.ytdlpArgs"
+                placeholder="例如：--js-runtimes node --no-check-certificate"
+              />
+              <p class="form-hint">当 URL 匹配该规则时，将自动添加这些参数到 yt-dlp 命令</p>
+            </div>
+            
+            <div class="args-presets">
+              <span class="preset-label">常用参数：</span>
+              <div class="preset-tags">
+                <code @click="addYtdlpArg(rule, '--js-runtimes node')">--js-runtimes node</code>
+                <code @click="addYtdlpArg(rule, '--no-check-certificate')">--no-check-certificate</code>
+                <code @click="addYtdlpArg(rule, '--geo-bypass')">--geo-bypass</code>
+                <code @click="addYtdlpArg(rule, '--ignore-errors')">--ignore-errors</code>
+                <code @click="addYtdlpArg(rule, '--extractor-args youtube:player_client=web')">youtube:player_client=web</code>
+              </div>
+            </div>
+          </div>
+          
+          <div class="form-section">
             <h4>高级选项</h4>
             
             <div class="form-group">
@@ -232,6 +258,66 @@ const editingIndex = ref(-1)
 // 预设模板
 const presets = [
   {
+    name: 'YouTube (推荐)',
+    description: '解决 YouTube 403/400 错误，需要 Node.js',
+    rule: {
+      name: 'YouTube',
+      domain: 'youtube.com',
+      urlPattern: 'youtube\\.com|youtu\\.be',
+      selectors: {
+        title: '',
+        videoUrl: '',
+        thumbnail: '',
+        uploader: '',
+        duration: ''
+      },
+      ytdlpArgs: '--js-runtimes node',
+      headers: '',
+      script: '',
+      enabled: true
+    }
+  },
+  {
+    name: 'YouTube (完整修复)',
+    description: '包含多个修复参数，解决各种问题',
+    rule: {
+      name: 'YouTube 完整修复',
+      domain: 'youtube.com',
+      urlPattern: 'youtube\\.com|youtu\\.be',
+      selectors: {
+        title: '',
+        videoUrl: '',
+        thumbnail: '',
+        uploader: '',
+        duration: ''
+      },
+      ytdlpArgs: '--js-runtimes node --extractor-args youtube:player_client=web',
+      headers: '',
+      script: '',
+      enabled: true
+    }
+  },
+  {
+    name: 'Bilibili',
+    description: 'B站视频特殊处理',
+    rule: {
+      name: 'Bilibili',
+      domain: 'bilibili.com',
+      urlPattern: 'bilibili\\.com|b23\\.tv',
+      selectors: {
+        title: '',
+        videoUrl: '',
+        thumbnail: '',
+        uploader: '',
+        duration: ''
+      },
+      ytdlpArgs: '--no-check-certificate',
+      headers: '',
+      script: '',
+      enabled: true
+    }
+  },
+  {
     name: '通用 HTML5 视频',
     description: '提取页面中的 video 标签',
     rule: {
@@ -245,6 +331,7 @@ const presets = [
         uploader: '',
         duration: ''
       },
+      ytdlpArgs: '',
       headers: '',
       script: '',
       enabled: true
@@ -264,6 +351,7 @@ const presets = [
         uploader: '',
         duration: ''
       },
+      ytdlpArgs: '',
       headers: '',
       script: '',
       enabled: true
@@ -283,6 +371,7 @@ const presets = [
         uploader: '',
         duration: ''
       },
+      ytdlpArgs: '',
       headers: '',
       script: `
 // 提取 JSON-LD 中的视频信息
@@ -323,10 +412,21 @@ const createEmptyRule = () => ({
     uploader: '',
     duration: ''
   },
+  ytdlpArgs: '',
   headers: '',
   script: '',
   enabled: true
 })
+
+const addYtdlpArg = (rule, arg) => {
+  if (rule.ytdlpArgs) {
+    if (!rule.ytdlpArgs.includes(arg)) {
+      rule.ytdlpArgs += ' ' + arg
+    }
+  } else {
+    rule.ytdlpArgs = arg
+  }
+}
 
 const addRule = () => {
   rules.value.push(createEmptyRule())
@@ -594,6 +694,47 @@ const applyPreset = (preset) => {
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: var(--spacing-md);
+  }
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: var(--spacing-xs);
+}
+
+.args-presets {
+  margin-top: var(--spacing-sm);
+}
+
+.preset-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: block;
+  margin-bottom: var(--spacing-xs);
+}
+
+.preset-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  
+  code {
+    padding: 4px 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+    
+    &:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: var(--primary-glow);
+    }
   }
 }
 

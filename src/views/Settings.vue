@@ -56,6 +56,19 @@
         
         <div class="setting-item">
           <div class="setting-info">
+            <label>支持播放列表</label>
+            <p>开启后会解析整个播放列表，关闭则只解析单个视频</p>
+          </div>
+          <div class="setting-control">
+            <label class="toggle">
+              <input type="checkbox" v-model="config.enablePlaylist" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <div class="setting-info">
             <label>同时下载数</label>
             <p>允许同时进行的下载任务数量</p>
           </div>
@@ -81,6 +94,22 @@
               <option :value="4">4 线程</option>
               <option :value="8">8 线程</option>
               <option :value="16">16 线程</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <div class="setting-info">
+            <label>失败重试次数</label>
+            <p>下载失败时自动重试的次数（网络超时等临时错误）</p>
+          </div>
+          <div class="setting-control">
+            <select class="input select" v-model.number="config.downloadRetries">
+              <option :value="0">不重试</option>
+              <option :value="1">1 次</option>
+              <option :value="2">2 次</option>
+              <option :value="3">3 次</option>
+              <option :value="5">5 次</option>
             </select>
           </div>
         </div>

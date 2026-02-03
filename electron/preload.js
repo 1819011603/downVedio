@@ -9,12 +9,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // yt-dlp 相关
   checkYtdlp: () => ipcRenderer.invoke('ytdlp:check'),
-  parseVideo: (url) => ipcRenderer.invoke('video:parse', url),
+  parseVideo: (url, enablePlaylist = true) => ipcRenderer.invoke('video:parse', url, enablePlaylist),
   getFormats: (url) => ipcRenderer.invoke('video:formats', url),
 
   // 下载相关
   startDownload: (task) => ipcRenderer.invoke('download:start', task),
-  cancelDownload: (taskId) => ipcRenderer.invoke('download:cancel', taskId),
+  cancelDownload: (taskId, taskTitle) => ipcRenderer.invoke('download:cancel', taskId, taskTitle),
   onDownloadProgress: (callback) => {
     ipcRenderer.on('download:progress', (_, data) => callback(data))
   },

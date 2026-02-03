@@ -18,12 +18,14 @@ const defaultConfig = {
   downloadPath: path.join(os.homedir(), 'Downloads', 'VideoDownloader'),
   namingTemplate: '{title}',
   defaultFormat: 'best',
+  enablePlaylist: true,         // 支持播放列表，默认开启
   proxy: '',
   cookieFile: '',
   cookiesFromBrowser: 'none',   // 从浏览器获取 Cookie: none, chrome, firefox, edge, safari
   concurrentDownloads: 1,
   autoRetry: true,
   maxRetries: 3,
+  downloadRetries: 3,           // 失败重试次数
   // 新增下载参数
   downloadThreads: 4,           // 下载线程数
   rateLimit: '',                // 限速，例如 '1M'
@@ -36,7 +38,6 @@ const defaultConfig = {
   audioQuality: '0',            // 音频质量 0-9
   writeDescription: false,      // 保存描述
   writeThumbnail: false,        // 保存封面
-  noPlaylist: false,            // 不下载播放列表
   customArgs: ''                // 自定义参数
 }
 
@@ -229,7 +230,7 @@ function findMatchingRule(url) {
 }
 
 // 解析视频信息
-async function parseVideoInfo(url) {
+async function parseVideoInfo(url, enablePlaylist = true) {
   const config = loadConfig()
   const matchedRule = findMatchingRule(url)
   
@@ -243,9 +244,12 @@ async function parseVideoInfo(url) {
       '--no-warnings'
     ]
     
-    // 如果是播放列表，使用 flat-playlist 只获取基本信息
-    // 否则获取完整信息包括格式列表
-    if (isPlaylistUrl) {
+    // 根据参数决定是否支持播放列表
+    if (!enablePlaylist) {
+      // 关闭播放列表支持，只解析单个视频
+      args.push('--no-playlist')
+    } else if (isPlaylistUrl) {
+      // 如果是播放列表，使用 flat-playlist 只获取基本信息
       args.push('--flat-playlist')
     }
 
@@ -443,35 +447,47 @@ function downloadVideo(task, onProgress) {
       args.push('-r', config.rateLimit)
     }
 
-    // 格式选择 - 优先使用 formatId（实际的格式ID）
-    const formatId = task.formatId || task.format
+    // 格式选择
+    const formatId = task.formatId
+    const formatType = task.formatType || 'video'  // video, video-only, audio
     
-    if (task.format === 'bestaudio') {
+    if (task.format === 'bestaudio' || formatType === 'audio') {
       // 仅音频 - 提取并转换
       args.push('-x')
       args.push('--audio-format', config.audioFormat || 'mp3')
       args.push('--audio-quality', config.audioQuality || '0')
-    } else if (task.format === 'bestvideo') {
+    } else if (task.format && task.format.includes('[height<=')) {
+      // 分辨率限制格式（来自播放列表）- 直接使用格式字符串
+      args.push('-f', task.format)
+    } else if (task.format === 'bestvideo' || formatType === 'video-only') {
       // 仅视频（不合并音频）
-      if (formatId && formatId !== 'bestvideo') {
+      if (formatId && /^\d+$/.test(formatId)) {
+        // 使用具体的纯视频格式ID
         args.push('-f', formatId)
       } else {
         args.push('-f', 'bestvideo')
       }
-    } else if (task.format === 'best') {
-      // 最佳质量 - 使用实际的格式ID + 最佳音频合并
-      if (formatId && formatId !== 'best') {
+    } else if (task.format === 'best' || formatType === 'video') {
+      // 视频+音频 - 合并最佳视频和音频
+      if (formatId && /^\d+$/.test(formatId)) {
+        // 使用具体的格式ID + 最佳音频
         args.push('-f', `${formatId}+bestaudio/best`)
+      } else if (task.format && task.format.includes('+')) {
+        // 已经是组合格式字符串
+        args.push('-f', task.format)
       } else {
         args.push('-f', 'bestvideo+bestaudio/best')
       }
     } else if (formatId) {
-      // 具体的 format_id - 自动合并最佳音频
+      // 其他情况：具体的 format_id
       if (/^\d+$/.test(formatId)) {
         args.push('-f', `${formatId}+bestaudio/best`)
       } else {
         args.push('-f', formatId)
       }
+    } else {
+      // 默认：最佳质量
+      args.push('-f', 'bestvideo+bestaudio/best')
     }
 
     // 字幕
@@ -641,6 +657,79 @@ function downloadVideo(task, onProgress) {
 // 活动下载任务
 const activeDownloads = new Map()
 
+// 判断是否为可重试的错误
+function isRetryableError(errorMessage) {
+  const retryablePatterns = [
+    /timed?\s*out/i,
+    /timeout/i,
+    /ETIMEDOUT/i,
+    /ECONNRESET/i,
+    /ECONNREFUSED/i,
+    /ENOTFOUND/i,
+    /network/i,
+    /connection/i,
+    /Unable to download/i,
+    /HTTP Error 5\d{2}/i,  // 5xx 服务器错误
+    /HTTP Error 429/i,     // Too Many Requests
+    /read operation/i,
+    /TransportError/i,
+    /IncompleteRead/i,
+    /RemoteDisconnected/i,
+    /ConnectionError/i
+  ]
+  return retryablePatterns.some(pattern => pattern.test(errorMessage))
+}
+
+// 带重试的下载函数
+async function downloadWithRetry(task, onProgress, maxRetries = 3, retryDelay = 3000) {
+  let lastError = null
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // 如果不是第一次尝试，通知前端正在重试
+      if (attempt > 1) {
+        onProgress({
+          taskId: task.id,
+          status: 'retrying',
+          retryCount: attempt,
+          maxRetries: maxRetries,
+          output: `重试中 (${attempt}/${maxRetries})...`
+        })
+        console.log(`重试下载 (${attempt}/${maxRetries}): ${task.title}`)
+      }
+      
+      const result = await downloadVideo(task, onProgress)
+      return result
+    } catch (error) {
+      lastError = error
+      console.error(`下载失败 (尝试 ${attempt}/${maxRetries}):`, error.message)
+      
+      // 检查是否为可重试的错误
+      if (!isRetryableError(error.message)) {
+        console.log('非可重试错误，直接失败')
+        throw error
+      }
+      
+      // 如果还有重试机会，等待后重试
+      if (attempt < maxRetries) {
+        // 递增延迟：3s, 6s, 9s...
+        const delay = retryDelay * attempt
+        onProgress({
+          taskId: task.id,
+          status: 'waiting_retry',
+          retryCount: attempt,
+          maxRetries: maxRetries,
+          output: `等待 ${delay / 1000} 秒后重试 (${attempt}/${maxRetries})...`
+        })
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  
+  // 所有重试都失败了
+  throw lastError
+}
+
 // IPC 处理
 app.whenReady().then(() => {
   createWindow()
@@ -660,9 +749,9 @@ app.whenReady().then(() => {
   ipcMain.handle('ytdlp:check', checkYtdlp)
 
   // 解析视频
-  ipcMain.handle('video:parse', async (_, url) => {
+  ipcMain.handle('video:parse', async (_, url, enablePlaylist = true) => {
     try {
-      return await parseVideoInfo(url)
+      return await parseVideoInfo(url, enablePlaylist)
     } catch (error) {
       // Error 对象不能通过 IPC 序列化，需要转换为普通对象
       throw new Error(error.message || String(error))
@@ -681,10 +770,14 @@ app.whenReady().then(() => {
 
   // 开始下载
   ipcMain.handle('download:start', async (event, task) => {
+    const config = loadConfig()
+    const maxRetries = config.downloadRetries || 3  // 从配置读取重试次数，默认3次
+    const retryDelay = config.retryDelay || 3000    // 重试延迟，默认3秒
+    
     try {
-      await downloadVideo(task, (progress) => {
+      await downloadWithRetry(task, (progress) => {
         mainWindow.webContents.send('download:progress', progress)
-      })
+      }, maxRetries, retryDelay)
       return { success: true }
     } catch (error) {
       // Error 对象不能通过 IPC 序列化，需要转换为普通对象
@@ -693,11 +786,41 @@ app.whenReady().then(() => {
   })
 
   // 取消下载
-  ipcMain.handle('download:cancel', async (_, taskId) => {
-    const cancel = activeDownloads.get(taskId)
-    if (cancel) {
-      cancel()
+  ipcMain.handle('download:cancel', async (_, taskId, taskTitle) => {
+    const downloadInfo = activeDownloads.get(taskId)
+    if (downloadInfo) {
+      // 终止下载进程
+      if (typeof downloadInfo === 'function') {
+        downloadInfo()
+      } else if (downloadInfo.kill) {
+        downloadInfo.kill()
+      }
       activeDownloads.delete(taskId)
+      
+      // 尝试删除 .part 临时文件
+      if (taskTitle) {
+        try {
+          const config = loadConfig()
+          const cleanTitle = taskTitle.replace(/[<>:"/\\|?*]/g, '_')
+          const downloadPath = config.downloadPath
+          const files = fs.readdirSync(downloadPath)
+          
+          for (const file of files) {
+            // 匹配 .part 文件和相关临时文件
+            if (file.includes(cleanTitle) && (file.endsWith('.part') || file.endsWith('.ytdl') || file.endsWith('.temp'))) {
+              const fullPath = path.join(downloadPath, file)
+              try {
+                fs.unlinkSync(fullPath)
+                console.log('已删除临时文件:', fullPath)
+              } catch (e) {
+                console.error('删除临时文件失败:', fullPath, e)
+              }
+            }
+          }
+        } catch (e) {
+          console.error('清理临时文件失败:', e)
+        }
+      }
     }
     return { success: true }
   })

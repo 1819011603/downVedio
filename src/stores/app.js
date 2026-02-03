@@ -9,10 +9,10 @@ const isElectron = () => {
 // 安全调用 Electron API
 const api = {
   checkYtdlp: () => isElectron() ? window.electronAPI.checkYtdlp() : Promise.resolve({ installed: false, version: null }),
-  parseVideo: (url) => isElectron() ? window.electronAPI.parseVideo(url) : Promise.reject(new Error('请通过 Electron 启动应用')),
+  parseVideo: (url, enablePlaylist = true) => isElectron() ? window.electronAPI.parseVideo(url, enablePlaylist) : Promise.reject(new Error('请通过 Electron 启动应用')),
   getFormats: (url) => isElectron() ? window.electronAPI.getFormats(url) : Promise.reject(new Error('请通过 Electron 启动应用')),
   startDownload: (task) => isElectron() ? window.electronAPI.startDownload(task) : Promise.reject(new Error('请通过 Electron 启动应用')),
-  cancelDownload: (taskId) => isElectron() ? window.electronAPI.cancelDownload(taskId) : Promise.resolve(),
+  cancelDownload: (taskId, taskTitle) => isElectron() ? window.electronAPI.cancelDownload(taskId, taskTitle) : Promise.resolve(),
   getConfig: () => isElectron() ? window.electronAPI.getConfig() : Promise.resolve({
     downloadPath: '',
     namingTemplate: '{title}',
@@ -49,12 +49,14 @@ export const useAppStore = defineStore('app', () => {
     downloadPath: '',
     namingTemplate: '{title}',
     defaultFormat: 'best',
+    enablePlaylist: true,  // 支持播放列表，默认开启
     proxy: '',
     cookieFile: '',
     cookiesFromBrowser: 'none',
     concurrentDownloads: 1,
     autoRetry: true,
     maxRetries: 3,
+    downloadRetries: 3,  // 失败重试次数
     downloadThreads: 4,
     rateLimit: '',
     downloadSubtitles: false,
@@ -160,12 +162,12 @@ export const useAppStore = defineStore('app', () => {
   }
 
   // 解析视频
-  async function parseVideo(url) {
+  async function parseVideo(url, enablePlaylist = true) {
     if (!isElectronEnv.value) {
       throw new Error('请使用 npm run electron:dev 启动应用')
     }
     try {
-      const result = await api.parseVideo(url)
+      const result = await api.parseVideo(url, enablePlaylist)
       return result
     } catch (error) {
       throw error
@@ -204,75 +206,89 @@ export const useAppStore = defineStore('app', () => {
     processQueue()
   }
 
-  // 处理下载队列
-  async function processQueue() {
-    // 检查是否有正在下载的任务
-    const downloading = downloadQueue.value.filter(t => t.status === 'downloading')
-    if (downloading.length >= config.value.concurrentDownloads) {
+  // 处理下载队列 - 支持并行下载
+  function processQueue() {
+    // 检查是否有正在下载的任务（包括 downloading 和 preparing 状态）
+    const activeCount = downloadQueue.value.filter(t => 
+      t.status === 'downloading' || t.status === 'preparing'
+    ).length
+    const availableSlots = config.value.concurrentDownloads - activeCount
+    
+    if (availableSlots <= 0) {
       return
     }
 
-    // 获取下一个待下载任务
-    const nextTask = downloadQueue.value.find(t => t.status === 'pending')
-    if (!nextTask) {
+    // 获取所有待下载任务
+    const pendingTasks = downloadQueue.value.filter(t => t.status === 'pending')
+    if (pendingTasks.length === 0) {
       return
     }
 
+    // 启动多个下载任务（不超过可用槽位数）
+    const tasksToStart = pendingTasks.slice(0, availableSlots)
+    
+    for (const task of tasksToStart) {
+      // 立即设置状态为 preparing，防止重复启动
+      task.status = 'preparing'
+      // 异步启动下载，不等待完成
+      startDownloadTask(task)
+    }
+  }
+  
+  // 启动单个下载任务
+  async function startDownloadTask(task) {
     // 检查文件是否已存在
-    let plainTask = JSON.parse(JSON.stringify(toRaw(nextTask)))
+    let plainTask = JSON.parse(JSON.stringify(toRaw(task)))
     
     try {
       const checkResult = await api.checkFileExists(plainTask)
       if (checkResult.exists) {
         // 显示弹窗让用户选择
-        const userChoice = await showFileExistsDialog(checkResult.filename, checkResult.fullPath, nextTask.id)
+        const userChoice = await showFileExistsDialog(checkResult.filename, checkResult.fullPath, task.id)
         
         if (userChoice === 'cancel') {
-          nextTask.status = 'cancelled'
-          nextTask.error = '用户取消：文件已存在'
-          processQueue()
+          task.status = 'cancelled'
+          task.error = '用户取消：文件已存在'
+          processQueue()  // 继续处理队列
           return
         } else if (userChoice === 'overwrite') {
           // 删除已存在的文件
           const deleteResult = await api.deleteFile(checkResult.fullPath)
           if (!deleteResult.success) {
-            nextTask.status = 'error'
-            nextTask.error = `无法删除已存在的文件: ${deleteResult.error}`
+            task.status = 'error'
+            task.error = `无法删除已存在的文件: ${deleteResult.error}`
             processQueue()
             return
           }
         } else if (userChoice === 'saveAs') {
           // 修改文件名添加时间戳
           const timestamp = Date.now()
-          nextTask.title = `${nextTask.title}_${timestamp}`
+          task.title = `${task.title}_${timestamp}`
         }
         // 重新生成 plainTask（更新后的标题）
-        plainTask = JSON.parse(JSON.stringify(toRaw(nextTask)))
+        plainTask = JSON.parse(JSON.stringify(toRaw(task)))
       }
     } catch (error) {
       console.error('检查文件存在失败:', error)
     }
 
     // 开始下载
-    nextTask.status = 'downloading'
-    nextTask.progress = 0
-    currentDownload.value = nextTask
+    task.status = 'downloading'
+    task.progress = 0
 
     try {
       await api.startDownload(plainTask)
-      nextTask.status = 'completed'
-      nextTask.progress = 100
-      showToast(`下载完成: ${nextTask.title}`, 'success')
+      task.status = 'completed'
+      task.progress = 100
+      showToast(`下载完成: ${task.title}`, 'success')
     } catch (error) {
-      nextTask.status = 'error'
-      nextTask.error = error.message || String(error)
-      nextTask.errorTime = new Date().toISOString()
-      showToast(`下载失败: ${nextTask.title}`, 'error')
+      task.status = 'error'
+      task.error = error.message || String(error)
+      task.errorTime = new Date().toISOString()
+      showToast(`下载失败: ${task.title}`, 'error')
     }
 
-    currentDownload.value = null
-
-    // 继续处理队列
+    // 继续处理队列（启动新的下载任务）
     processQueue()
   }
   
@@ -307,9 +323,24 @@ export const useAppStore = defineStore('app', () => {
   function updateTaskProgress(data) {
     const task = downloadQueue.value.find(t => t.id === data.taskId)
     if (task) {
-      task.progress = data.progress
-      task.status = data.status
-      task.output = data.output
+      // 处理进度
+      if (data.progress !== undefined && data.progress !== null) {
+        task.progress = data.progress
+      }
+      // 处理状态（重试状态保持为 downloading，但显示重试信息）
+      if (data.status === 'retrying' || data.status === 'waiting_retry') {
+        task.status = 'retrying'
+        task.retryCount = data.retryCount
+        task.maxRetries = data.maxRetries
+      } else if (data.status) {
+        task.status = data.status
+        // 重新开始下载后清除重试信息
+        if (data.status === 'downloading') {
+          task.retryCount = undefined
+          task.maxRetries = undefined
+        }
+      }
+      if (data.output) task.output = data.output
       // 保存下载速度等信息
       if (data.speed) task.speed = data.speed
       if (data.eta) task.eta = data.eta
@@ -321,7 +352,7 @@ export const useAppStore = defineStore('app', () => {
   async function pauseTask(taskId) {
     const task = downloadQueue.value.find(t => t.id === taskId)
     if (task && task.status === 'downloading') {
-      await api.cancelDownload(taskId)
+      await api.cancelDownload(taskId, task.title)
       task.status = 'paused'
     }
   }
@@ -340,7 +371,7 @@ export const useAppStore = defineStore('app', () => {
     const task = downloadQueue.value.find(t => t.id === taskId)
     if (task) {
       if (task.status === 'downloading') {
-        await api.cancelDownload(taskId)
+        await api.cancelDownload(taskId, task.title)
       }
       task.status = 'cancelled'
     }

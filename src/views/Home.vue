@@ -42,7 +42,10 @@
             <kbd>Ctrl</kbd> + <kbd>V</kbd> 自动解析
           </span>
           <span class="tip-divider">|</span>
-          <span class="tip-item">支持播放列表</span>
+          <label class="playlist-toggle">
+            <input type="checkbox" v-model="enablePlaylist" />
+            <span class="toggle-text">支持播放列表</span>
+          </label>
         </div>
       </div>
     </section>
@@ -297,17 +300,39 @@
             </div>
           </div>
           
-          <div class="format-type-selector">
-            <button 
-              v-for="type in formatTypes"
-              :key="type.value"
-              class="format-type-btn"
-              :class="{ active: formatType === type.value }"
-              @click="formatType = type.value; selectedFormat = type.defaultFormat"
-            >
-              <component :is="type.icon" />
-              <span>{{ type.label }}</span>
-            </button>
+          <!-- 格式类型选择 -->
+          <div class="playlist-format-row">
+            <div class="format-type-selector">
+              <button 
+                v-for="type in formatTypes"
+                :key="type.value"
+                class="format-type-btn"
+                :class="{ active: formatType === type.value }"
+                @click="formatType = type.value; selectedFormat = type.defaultFormat; applyResolutionToAll()"
+              >
+                <component :is="type.icon" />
+                <span>{{ type.label }}</span>
+              </button>
+            </div>
+            
+            <!-- 分辨率选择（仅视频模式） -->
+            <div class="resolution-selector" v-if="formatType !== 'audio'">
+              <label>统一分辨率：</label>
+              <div class="resolution-select-wrapper">
+                <select class="resolution-select" v-model="selectedResolution" @change="applyResolutionToAll" :disabled="loadingFormats">
+                  <option v-for="res in resolutionOptions" :key="res.value" :value="res.value">
+                    {{ res.label }}
+                  </option>
+                </select>
+                <span v-if="loadingFormats" class="loading-hint">
+                  <svg viewBox="0 0 24 24" width="14" height="14" class="animate-spin">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+                  </svg>
+                  获取中...
+                </span>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -317,9 +342,8 @@
             :key="item.id || index"
             class="playlist-item"
             :class="{ selected: selectedItems.has(index) }"
-            @click="toggleSelect(index)"
           >
-            <div class="item-checkbox">
+            <div class="item-checkbox" @click="toggleSelect(index)">
               <svg v-if="selectedItems.has(index)" viewBox="0 0 24 24" width="18" height="18">
                 <rect x="3" y="3" width="18" height="18" rx="2" fill="var(--primary)"/>
                 <polyline points="9 12 11 14 15 10" stroke="var(--bg-deep)" stroke-width="2" fill="none"/>
@@ -328,10 +352,22 @@
                 <rect x="3" y="3" width="18" height="18" rx="2" stroke="var(--border-light)" stroke-width="2" fill="none"/>
               </svg>
             </div>
-            <span class="item-index">{{ String(index + 1).padStart(2, '0') }}</span>
-            <div class="item-info">
+            <span class="item-index" @click="toggleSelect(index)">{{ String(index + 1).padStart(2, '0') }}</span>
+            <div class="item-info" @click="toggleSelect(index)">
               <span class="item-title">{{ item.title || `视频 ${index + 1}` }}</span>
               <span v-if="item.duration" class="item-duration">{{ formatDuration(item.duration) }}</span>
+            </div>
+            <!-- 单个视频分辨率选择 -->
+            <div class="item-resolution" v-if="formatType !== 'audio'" @click.stop>
+              <select 
+                class="item-resolution-select" 
+                v-model="playlistItemResolutions[index]"
+                :title="'选择分辨率'"
+              >
+                <option v-for="res in resolutionOptions" :key="res.value" :value="res.value">
+                  {{ res.label }}
+                </option>
+              </select>
             </div>
           </div>
         </div>
@@ -390,8 +426,47 @@ const selectedItems = ref(new Set())
 const thumbnailError = ref(false)
 const errorCopied = ref(false)
 
+// 分辨率相关
+const selectedResolution = ref('best')  // 统一分辨率选择
+const playlistItemResolutions = ref({})  // 每个视频的独立分辨率选择
+const playlistFormats = ref([])  // 播放列表可用的格式（从第一个视频获取）
+const loadingFormats = ref(false)  // 正在加载格式信息
+
+// 播放列表开关（本地状态，与设置同步）
+const enablePlaylist = ref(true)
+
+// 动态分辨率选项（根据视频实际分辨率生成）
+const resolutionOptions = computed(() => {
+  const options = [{ value: 'best', label: '最佳质量' }]
+  
+  if (playlistFormats.value.length > 0) {
+    // 从格式列表中提取唯一的分辨率
+    const heights = new Set()
+    playlistFormats.value.forEach(f => {
+      if (f.height && f.vcodec && f.vcodec !== 'none') {
+        heights.add(f.height)
+      }
+    })
+    
+    // 按分辨率从高到低排序
+    const sortedHeights = Array.from(heights).sort((a, b) => b - a)
+    
+    sortedHeights.forEach(height => {
+      let label = `${height}p`
+      if (height >= 2160) label = `4K (${height}p)`
+      else if (height >= 1440) label = `2K (${height}p)`
+      options.push({ value: String(height), label })
+    })
+  }
+  
+  return options
+})
+
 // 检查路由参数，或恢复之前的解析结果
 onMounted(() => {
+  // 从设置中初始化播放列表开关
+  enablePlaylist.value = appStore.config.enablePlaylist !== false
+  
   if (route.query.url) {
     url.value = route.query.url
     // 清除查询参数
@@ -404,6 +479,11 @@ onMounted(() => {
   }
 })
 
+// 监听播放列表开关变化，同步到设置
+watch(enablePlaylist, (newVal) => {
+  appStore.config.enablePlaylist = newVal
+})
+
 // 恢复之前的解析结果
 function restoreParsedResult() {
   const saved = appStore.parsedResult
@@ -414,6 +494,16 @@ function restoreParsedResult() {
     selectedFormat.value = saved.selectedFormat
     formatType.value = saved.formatType
     selectedItems.value = new Set(saved.selectedItems)
+    // 恢复分辨率信息
+    if (saved.selectedResolution) {
+      selectedResolution.value = saved.selectedResolution
+    }
+    if (saved.playlistItemResolutions) {
+      playlistItemResolutions.value = saved.playlistItemResolutions
+    }
+    if (saved.playlistFormats) {
+      playlistFormats.value = saved.playlistFormats
+    }
   } else {
     // 没有保存的结果时，使用设置中的默认格式
     applyDefaultFormat()
@@ -443,12 +533,16 @@ function saveParsedResultToStore() {
     isPlaylist: isPlaylist.value,
     selectedFormat: selectedFormat.value,
     formatType: formatType.value,
-    selectedItems: Array.from(selectedItems.value)
+    selectedItems: Array.from(selectedItems.value),
+    // 保存分辨率信息
+    selectedResolution: selectedResolution.value,
+    playlistItemResolutions: playlistItemResolutions.value,
+    playlistFormats: playlistFormats.value
   })
 }
 
 // 监听状态变化，自动保存
-watch([videoInfo, selectedFormat, formatType, selectedItems], () => {
+watch([videoInfo, selectedFormat, formatType, selectedItems, selectedResolution, playlistItemResolutions, playlistFormats], () => {
   if (videoInfo.value) {
     saveParsedResultToStore()
   }
@@ -604,17 +698,28 @@ const parseUrl = async () => {
   // 使用设置中的默认格式
   applyDefaultFormat()
   
+  // 同步播放列表设置
+  appStore.config.enablePlaylist = enablePlaylist.value
+  
   try {
-    const result = await appStore.parseVideo(url.value.trim())
+    const result = await appStore.parseVideo(url.value.trim(), enablePlaylist.value)
     
     if (result.type === 'playlist') {
       isPlaylist.value = true
       videoInfo.value = result.data
       // 默认全选
       result.data.forEach((_, index) => selectedItems.value.add(index))
+      // 初始化播放列表分辨率
+      selectedResolution.value = 'best'
+      playlistFormats.value = []
+      initPlaylistResolutions()
+      
+      // 异步获取第一个视频的格式信息作为分辨率参考
+      fetchPlaylistFormats(result.data)
     } else {
       isPlaylist.value = false
       videoInfo.value = result.data
+      playlistFormats.value = []
     }
   } catch (error) {
     parseError.value = error.message
@@ -688,6 +793,50 @@ const selectAll = () => {
   }
 }
 
+// 将统一分辨率应用到所有视频
+const applyResolutionToAll = () => {
+  if (isPlaylist.value && videoInfo.value) {
+    videoInfo.value.forEach((_, index) => {
+      playlistItemResolutions.value[index] = selectedResolution.value
+    })
+  }
+}
+
+// 初始化播放列表分辨率
+const initPlaylistResolutions = () => {
+  if (isPlaylist.value && videoInfo.value) {
+    playlistItemResolutions.value = {}
+    videoInfo.value.forEach((_, index) => {
+      playlistItemResolutions.value[index] = selectedResolution.value
+    })
+  }
+}
+
+// 异步获取播放列表的格式信息（从第一个视频获取作为参考）
+const fetchPlaylistFormats = async (playlist) => {
+  if (!playlist || playlist.length === 0) return
+  
+  // 找到第一个有 URL 的视频
+  const firstItem = playlist.find(item => item.url || item.webpage_url)
+  if (!firstItem) return
+  
+  const itemUrl = firstItem.url || firstItem.webpage_url
+  
+  loadingFormats.value = true
+  try {
+    const result = await appStore.parseVideo(itemUrl)
+    if (result.type === 'single' && result.data.formats) {
+      playlistFormats.value = result.data.formats
+      appStore.showToast('已获取可用分辨率', 'success')
+    }
+  } catch (error) {
+    console.error('获取格式信息失败:', error)
+    // 失败时不显示错误，用户仍可使用"最佳质量"选项
+  } finally {
+    loadingFormats.value = false
+  }
+}
+
 const selectNone = () => {
   selectedItems.value.clear()
 }
@@ -706,14 +855,45 @@ const addToDownload = () => {
   // 获取选中格式的信息
   const formatInfo = selectedFormatInfo.value || bestVideoInfo.value
   
-  // 确定实际使用的 format_id
-  let actualFormatId = selectedFormat.value
-  if (selectedFormat.value === 'best' && bestVideoInfo.value?.format_id) {
-    actualFormatId = bestVideoInfo.value.format_id
-  } else if (selectedFormat.value === 'bestvideo' && bestVideoInfo.value?.format_id) {
-    actualFormatId = bestVideoInfo.value.format_id
-  } else if (selectedFormat.value === 'bestaudio' && bestAudioInfo.value?.format_id) {
-    actualFormatId = bestAudioInfo.value.format_id
+  // 根据格式类型确定实际格式字符串
+  let format = selectedFormat.value
+  let formatId = null
+  let resolutionLabel = ''
+  
+  if (formatType.value === 'audio') {
+    // 仅音频
+    format = 'bestaudio'
+    resolutionLabel = '音频'
+  } else if (formatType.value === 'video-only') {
+    // 仅视频 - 不合并音频
+    if (selectedFormat.value === 'bestvideo') {
+      format = 'bestvideo'
+      resolutionLabel = '仅视频'
+    } else if (selectedFormatInfo.value) {
+      // 选择了具体格式，使用 format_id
+      format = 'bestvideo'
+      formatId = selectedFormat.value
+      resolutionLabel = formatInfo?.resolution || (formatInfo?.height ? `${formatInfo.height}p` : '仅视频')
+    } else {
+      format = 'bestvideo'
+      resolutionLabel = '仅视频'
+    }
+  } else {
+    // 视频+音频
+    if (selectedFormat.value === 'best') {
+      // 使用最佳视频格式ID + 音频
+      if (bestVideoInfo.value?.format_id) {
+        formatId = bestVideoInfo.value.format_id
+        resolutionLabel = formatInfo?.resolution || (formatInfo?.height ? `${formatInfo.height}p` : '最佳')
+      } else {
+        format = 'best'
+        resolutionLabel = '最佳'
+      }
+    } else if (selectedFormatInfo.value) {
+      // 选择了具体格式
+      formatId = selectedFormat.value
+      resolutionLabel = formatInfo?.resolution || (formatInfo?.height ? `${formatInfo.height}p` : '')
+    }
   }
   
   appStore.addToQueue({
@@ -722,9 +902,10 @@ const addToDownload = () => {
     thumbnail: videoInfo.value.thumbnail,
     duration: videoInfo.value.duration,
     uploader: videoInfo.value.uploader,
-    format: selectedFormat.value,
-    formatId: actualFormatId,  // 保存实际的 format_id
-    resolution: formatInfo?.resolution || (formatInfo?.height ? `${formatInfo.height}p` : ''),
+    format: format,
+    formatId: formatId,
+    formatType: formatType.value,  // 保存格式类型
+    resolution: resolutionLabel,
     filesize: formatInfo ? getFileSize(formatInfo) : 0
   })
   
@@ -735,20 +916,49 @@ const addToDownload = () => {
 const addSelectedToDownload = () => {
   if (!isPlaylist.value || selectedItems.value.size === 0) return
   
-  // 获取选中格式的信息
-  const formatInfo = selectedFormatInfo.value || bestVideoInfo.value
-  
   const tasks = Array.from(selectedItems.value).map(index => {
     const item = videoInfo.value[index]
+    // 获取该视频的分辨率设置
+    const itemResolution = playlistItemResolutions.value[index] || selectedResolution.value
+    
+    // 根据格式类型和分辨率生成格式字符串
+    let format = ''
+    let resolutionLabel = ''
+    
+    if (formatType.value === 'audio') {
+      // 仅音频
+      format = 'bestaudio'
+      resolutionLabel = '音频'
+    } else if (formatType.value === 'video-only') {
+      // 仅视频
+      if (itemResolution === 'best') {
+        format = 'bestvideo'
+        resolutionLabel = '仅视频'
+      } else {
+        format = `bestvideo[height<=${itemResolution}]`
+        resolutionLabel = `${itemResolution}p (仅视频)`
+      }
+    } else {
+      // 视频+音频
+      if (itemResolution === 'best') {
+        format = 'bestvideo+bestaudio/best'
+        resolutionLabel = '最佳'
+      } else {
+        format = `bestvideo[height<=${itemResolution}]+bestaudio/best[height<=${itemResolution}]`
+        resolutionLabel = `${itemResolution}p`
+      }
+    }
+    
     return {
       url: item.url || item.webpage_url || url.value,
       title: item.title,
       thumbnail: item.thumbnail,
       duration: item.duration,
       uploader: item.uploader,
-      format: selectedFormat.value,
-      resolution: formatInfo?.resolution || (formatInfo?.height ? `${formatInfo.height}p` : ''),
-      filesize: formatInfo ? getFileSize(formatInfo) : 0,
+      format: format,
+      formatType: formatType.value,  // 保存格式类型
+      resolution: resolutionLabel,
+      maxHeight: itemResolution,
       index: index + 1
     }
   })
@@ -1027,6 +1237,30 @@ const copyDownloadCommand = async () => {
 
 .tip-divider {
   color: var(--border-light);
+}
+
+.playlist-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  
+  input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  
+  .toggle-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    user-select: none;
+  }
+  
+  &:hover .toggle-text {
+    color: var(--text-primary);
+  }
 }
 
 // 错误卡片
@@ -1390,9 +1624,63 @@ const copyDownloadCommand = async () => {
 
 .playlist-header {
   display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.playlist-format-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--spacing-md);
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.resolution-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  
+  label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+}
+
+.resolution-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.loading-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.resolution-select {
+  padding: 6px 28px 6px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238888a0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  
+  &:focus {
+    border-color: var(--primary);
+  }
 }
 
 .playlist-info {
@@ -1473,6 +1761,35 @@ const copyDownloadCommand = async () => {
   font-family: var(--font-mono);
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.item-resolution {
+  flex-shrink: 0;
+  margin-left: var(--spacing-sm);
+}
+
+.item-resolution-select {
+  padding: 4px 24px 4px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238888a0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  min-width: 80px;
+  
+  &:focus {
+    border-color: var(--primary);
+  }
+  
+  &:hover {
+    border-color: var(--border-light);
+  }
 }
 
 .playlist-footer {

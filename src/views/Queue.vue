@@ -155,12 +155,26 @@
                 </svg>
                 等待中
               </span>
+              <span v-else-if="task.status === 'preparing'" class="status-text preparing">
+                <svg viewBox="0 0 24 24" width="14" height="14" class="animate-spin">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/>
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+                </svg>
+                准备中
+              </span>
               <span v-else-if="task.status === 'downloading'" class="status-text downloading">
                 <svg viewBox="0 0 24 24" width="14" height="14" class="animate-spin">
                   <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/>
                   <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
                 </svg>
                 下载中
+              </span>
+              <span v-else-if="task.status === 'retrying'" class="status-text retrying">
+                <svg viewBox="0 0 24 24" width="14" height="14" class="animate-spin">
+                  <path d="M21 12a9 9 0 1 1-9-9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+                  <path d="M21 3v9h-9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                重试中 ({{ task.retryCount }}/{{ task.maxRetries }})
               </span>
               <span v-else-if="task.status === 'completed'" class="status-text completed">
                 <svg viewBox="0 0 24 24" width="14" height="14">
@@ -827,8 +841,16 @@ const copyErrorInfo = async (task) => {
     color: var(--text-muted);
   }
   
+  &.preparing {
+    color: var(--warning);
+  }
+  
   &.downloading {
     color: var(--primary);
+  }
+  
+  &.retrying {
+    color: var(--warning);
   }
   
   &.completed {

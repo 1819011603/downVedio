@@ -71,7 +71,8 @@ export const useAppStore = defineStore('app', () => {
     audioFormat: 'mp3',
     audioQuality: '0',
     customArgs: '',
-    smartParseDomains: []  // 智能解析域名白名单
+    smartParseDomains: [],  // 智能解析域名白名单
+    smartParseFormats: ['m3u8']  // 智能解析视频格式过滤
   })
   const history = ref([])
   const customRules = ref([])

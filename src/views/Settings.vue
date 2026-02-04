@@ -350,24 +350,45 @@
               </button>
             </div>
           </div>
+        </div>
+        
+        <!-- 视频格式过滤 -->
+        <div class="setting-item column">
+          <div class="setting-info">
+            <label>视频格式过滤</label>
+            <p>选择智能解析时要收集的视频格式类型</p>
+          </div>
           
-          <div class="smart-parse-help">
-            <div class="help-icon">
-              <svg viewBox="0 0 24 24" width="16" height="16">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" stroke-width="2" fill="none"/>
-                <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <div class="help-content">
-              <p><strong>使用说明：</strong></p>
-              <ul>
-                <li>添加的域名会自动匹配子域名（如添加 site.com 会匹配 www.site.com）</li>
-                <li>适用于 yt-dlp 不支持的网站</li>
-                <li>智能解析会捕获页面中的视频流地址（m3u8、mp4 等）</li>
-                <li>如果捕获到多个视频来源，可以选择想要下载的链接</li>
-              </ul>
-            </div>
+          <div class="format-checkboxes">
+            <label class="checkbox-item" v-for="fmt in availableFormats" :key="fmt.value">
+              <input 
+                type="checkbox" 
+                :value="fmt.value" 
+                v-model="config.smartParseFormats"
+                :disabled="fmt.value === 'all' ? false : config.smartParseFormats.includes('all')"
+              />
+              <span class="checkbox-label">{{ fmt.label }}</span>
+              <span class="checkbox-desc">{{ fmt.desc }}</span>
+            </label>
+          </div>
+        </div>
+          
+        <div class="smart-parse-help">
+          <div class="help-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" stroke-width="2" fill="none"/>
+              <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="help-content">
+            <p><strong>使用说明：</strong></p>
+            <ul>
+              <li>添加的域名会自动匹配子域名（如添加 site.com 会匹配 www.site.com）</li>
+              <li>适用于 yt-dlp 不支持的网站</li>
+              <li>默认只收集 m3u8 格式，可根据需要添加其他格式</li>
+              <li>如果捕获到多个视频来源，可以选择想要下载的链接</li>
+            </ul>
           </div>
         </div>
       </section>
@@ -620,8 +641,21 @@ const config = reactive({
   audioQuality: '0',
   customArgs: '',
   // 智能解析域名白名单
-  smartParseDomains: []
+  smartParseDomains: [],
+  // 智能解析视频格式过滤
+  smartParseFormats: ['m3u8']
 })
+
+// 可选的视频格式
+const availableFormats = [
+  { value: 'm3u8', label: 'M3U8', desc: 'HLS 流媒体' },
+  { value: 'mpd', label: 'MPD', desc: 'DASH 流媒体' },
+  { value: 'mp4', label: 'MP4', desc: '常见视频格式' },
+  { value: 'flv', label: 'FLV', desc: 'Flash 视频' },
+  { value: 'ts', label: 'TS', desc: '视频分片' },
+  { value: 'webm', label: 'WebM', desc: 'Web 视频格式' },
+  { value: 'all', label: '全部', desc: '收集所有格式' },
+]
 
 // 智能解析域名输入
 const newSmartDomain = ref('')
@@ -672,6 +706,10 @@ onMounted(() => {
   // 确保 smartParseDomains 是数组
   if (!Array.isArray(config.smartParseDomains)) {
     config.smartParseDomains = []
+  }
+  // 确保 smartParseFormats 是数组且有默认值
+  if (!Array.isArray(config.smartParseFormats) || config.smartParseFormats.length === 0) {
+    config.smartParseFormats = ['m3u8']
   }
 })
 
@@ -972,6 +1010,58 @@ const checkForUpdates = () => {
   
   .input {
     flex: 1;
+  }
+}
+
+// 格式选择复选框
+.format-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  width: 100%;
+}
+
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    border-color: var(--primary);
+  }
+  
+  &:has(input:checked) {
+    background: rgba(var(--primary-rgb), 0.1);
+    border-color: var(--primary);
+  }
+  
+  &:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  
+  .checkbox-label {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  
+  .checkbox-desc {
+    font-size: 11px;
+    color: var(--text-muted);
   }
 }
 

@@ -43,7 +43,9 @@ const defaultConfig = {
   writeThumbnail: false,        // 保存封面
   customArgs: '',               // 自定义参数
   // 智能解析域名白名单 - 这些域名直接使用智能解析，不用 yt-dlp
-  smartParseDomains: []         // 例如: ['example.com', 'video.site.com']
+  smartParseDomains: [],        // 例如: ['example.com', 'video.site.com']
+  // 智能解析视频格式过滤
+  smartParseFormats: ['m3u8']   // 默认只收集 m3u8，可选: m3u8, mpd, mp4, flv, ts, webm
 }
 
 // 加载配置
@@ -290,33 +292,68 @@ async function smartParse(url, options = {}) {
   let pageTitle = ''
   let pageThumbnail = ''
   
-  // 视频流 URL 匹配模式
-  const videoPatterns = [
-    /\.m3u8(\?|$|#)/i,
-    /\.mpd(\?|$|#)/i,
-    /\.mp4(\?|$|#)/i,
-    /\.flv(\?|$|#)/i,
-    /\.ts(\?|$|#)/i,
-    /\.m4s(\?|$|#)/i,
-    /\.webm(\?|$|#)/i,
-    /\.mkv(\?|$|#)/i,
-    /\.avi(\?|$|#)/i,
-    /\.mov(\?|$|#)/i,
-    /video.*\.m3u8/i,
-    /playlist.*\.m3u8/i,
-    /manifest.*\.mpd/i,
-    /stream.*\.(mp4|flv|m3u8)/i,
-    /\/video\//i,           // URL 路径包含 /video/
-    /\/play\//i,            // URL 路径包含 /play/
-    /\/media\//i,           // URL 路径包含 /media/
-    /\/hls\//i,             // HLS 流
-    /\/dash\//i,            // DASH 流
-    /videoplayback/i,       // YouTube 等
-    /googlevideo\.com/i,    // Google 视频
-    /\.akamaized\.net.*video/i,  // Akamai CDN 视频
-    /cloudfront.*video/i,   // CloudFront CDN 视频
-    /\.cdn.*\.(mp4|m3u8|ts)/i,  // 通用 CDN
-  ]
+  // 从配置获取要收集的视频格式
+  const allowedFormats = config.smartParseFormats || ['m3u8']
+  console.log('允许的视频格式:', allowedFormats)
+  
+  // 根据配置动态生成视频匹配模式
+  const videoPatterns = []
+  
+  // 基于配置的格式添加匹配模式
+  if (allowedFormats.includes('m3u8')) {
+    videoPatterns.push(/\.m3u8(\?|$|#)/i)
+    videoPatterns.push(/video.*\.m3u8/i)
+    videoPatterns.push(/playlist.*\.m3u8/i)
+    videoPatterns.push(/\/hls\//i)
+  }
+  if (allowedFormats.includes('mpd')) {
+    videoPatterns.push(/\.mpd(\?|$|#)/i)
+    videoPatterns.push(/manifest.*\.mpd/i)
+    videoPatterns.push(/\/dash\//i)
+  }
+  if (allowedFormats.includes('mp4')) {
+    videoPatterns.push(/\.mp4(\?|$|#)/i)
+    videoPatterns.push(/stream.*\.mp4/i)
+    videoPatterns.push(/videoplayback/i)
+    videoPatterns.push(/googlevideo\.com/i)
+  }
+  if (allowedFormats.includes('flv')) {
+    videoPatterns.push(/\.flv(\?|$|#)/i)
+    videoPatterns.push(/stream.*\.flv/i)
+  }
+  if (allowedFormats.includes('ts')) {
+    videoPatterns.push(/\.ts(\?|$|#)/i)
+    videoPatterns.push(/\.m4s(\?|$|#)/i)
+  }
+  if (allowedFormats.includes('webm')) {
+    videoPatterns.push(/\.webm(\?|$|#)/i)
+  }
+  
+  // 如果配置了收集所有格式，添加通用模式
+  if (allowedFormats.includes('all')) {
+    videoPatterns.push(/\.m3u8(\?|$|#)/i)
+    videoPatterns.push(/\.mpd(\?|$|#)/i)
+    videoPatterns.push(/\.mp4(\?|$|#)/i)
+    videoPatterns.push(/\.flv(\?|$|#)/i)
+    videoPatterns.push(/\.ts(\?|$|#)/i)
+    videoPatterns.push(/\.m4s(\?|$|#)/i)
+    videoPatterns.push(/\.webm(\?|$|#)/i)
+    videoPatterns.push(/\.mkv(\?|$|#)/i)
+    videoPatterns.push(/video.*\.m3u8/i)
+    videoPatterns.push(/playlist.*\.m3u8/i)
+    videoPatterns.push(/manifest.*\.mpd/i)
+    videoPatterns.push(/stream.*\.(mp4|flv|m3u8)/i)
+    videoPatterns.push(/\/video\//i)
+    videoPatterns.push(/\/play\//i)
+    videoPatterns.push(/\/media\//i)
+    videoPatterns.push(/\/hls\//i)
+    videoPatterns.push(/\/dash\//i)
+    videoPatterns.push(/videoplayback/i)
+    videoPatterns.push(/googlevideo\.com/i)
+    videoPatterns.push(/\.akamaized\.net.*video/i)
+    videoPatterns.push(/cloudfront.*video/i)
+    videoPatterns.push(/\.cdn.*\.(mp4|m3u8|ts)/i)
+  }
 
   // 需要排除的 URL 模式
   const excludePatterns = [
@@ -444,7 +481,7 @@ async function smartParse(url, options = {}) {
       callback({ cancel: false })
     })
 
-    // 监听响应头（检查 Content-Type）
+    // 监听响应头（检查 Content-Type）- 也要遵循格式过滤
     session.webRequest.onHeadersReceived((details, callback) => {
       const reqUrl = details.url
       
@@ -457,15 +494,38 @@ async function smartParse(url, options = {}) {
       const contentType = details.responseHeaders?.['content-type']?.[0] || 
                           details.responseHeaders?.['Content-Type']?.[0] || ''
       
-      // 通过 Content-Type 检测视频
-      const isVideoContentType = 
-        contentType.includes('mpegurl') ||           // m3u8
-        contentType.includes('dash+xml') ||          // mpd
-        contentType.includes('video/') ||            // video/*
-        contentType.includes('application/octet-stream') ||  // 二进制流（可能是视频）
-        contentType.includes('binary/octet-stream')
+      // 根据配置的格式，检测 Content-Type
+      let isAllowedContentType = false
       
-      if (isVideoContentType && !capturedUrls.includes(reqUrl)) {
+      if (allowedFormats.includes('all')) {
+        // 全部格式时，接受所有视频类型
+        isAllowedContentType = 
+          contentType.includes('mpegurl') ||
+          contentType.includes('dash+xml') ||
+          contentType.includes('video/')
+      } else {
+        // 按配置的格式过滤
+        if (allowedFormats.includes('m3u8') && contentType.includes('mpegurl')) {
+          isAllowedContentType = true
+        }
+        if (allowedFormats.includes('mpd') && contentType.includes('dash+xml')) {
+          isAllowedContentType = true
+        }
+        if (allowedFormats.includes('mp4') && contentType.includes('video/mp4')) {
+          isAllowedContentType = true
+        }
+        if (allowedFormats.includes('webm') && contentType.includes('video/webm')) {
+          isAllowedContentType = true
+        }
+        if (allowedFormats.includes('flv') && contentType.includes('video/x-flv')) {
+          isAllowedContentType = true
+        }
+        if (allowedFormats.includes('ts') && (contentType.includes('video/mp2t') || contentType.includes('video/MP2T'))) {
+          isAllowedContentType = true
+        }
+      }
+      
+      if (isAllowedContentType && !capturedUrls.includes(reqUrl)) {
         // 排除明显不是视频的
         const isExcluded = excludePatterns.some(pattern => pattern.test(reqUrl))
         if (!isExcluded) {
@@ -540,6 +600,21 @@ async function smartParse(url, options = {}) {
         })
       }
 
+      // 检查 URL 是否符合配置的格式
+      const isUrlAllowed = (url) => {
+        if (allowedFormats.includes('all')) return true
+        
+        const urlLower = url.toLowerCase()
+        if (allowedFormats.includes('m3u8') && urlLower.includes('.m3u8')) return true
+        if (allowedFormats.includes('mpd') && urlLower.includes('.mpd')) return true
+        if (allowedFormats.includes('mp4') && urlLower.includes('.mp4')) return true
+        if (allowedFormats.includes('flv') && urlLower.includes('.flv')) return true
+        if (allowedFormats.includes('ts') && (urlLower.includes('.ts') || urlLower.includes('.m4s'))) return true
+        if (allowedFormats.includes('webm') && urlLower.includes('.webm')) return true
+        
+        return false
+      }
+
       // 尝试从页面提取视频 URL
       const extractVideoFromPage = async () => {
         try {
@@ -576,9 +651,9 @@ async function smartParse(url, options = {}) {
                 });
               } catch(e) {}
               
-              // 3. 从页面中查找可能的视频 URL
+              // 3. 从页面中查找可能的视频 URL（提取所有可能的视频格式）
               const scripts = document.querySelectorAll('script');
-              const urlPattern = /(https?:\\/\\/[^"'\\s]+\\.(m3u8|mpd|mp4|flv)[^"'\\s]*)/gi;
+              const urlPattern = /(https?:\\/\\/[^"'\\s]+\\.(m3u8|mpd|mp4|flv|ts|m4s|webm)[^"'\\s]*)/gi;
               scripts.forEach(script => {
                 const matches = script.textContent.match(urlPattern);
                 if (matches) {
@@ -589,7 +664,7 @@ async function smartParse(url, options = {}) {
               // 4. 从 data 属性查找
               document.querySelectorAll('[data-src], [data-video], [data-url]').forEach(el => {
                 const src = el.dataset.src || el.dataset.video || el.dataset.url;
-                if (src && (src.includes('.m3u8') || src.includes('.mpd') || src.includes('.mp4'))) {
+                if (src && (src.includes('.m3u8') || src.includes('.mpd') || src.includes('.mp4') || src.includes('.flv') || src.includes('.ts') || src.includes('.webm'))) {
                   urls.push(src);
                 }
               });
@@ -601,7 +676,9 @@ async function smartParse(url, options = {}) {
           if (pageVideoUrls && pageVideoUrls.length > 0) {
             console.log('从页面提取到视频 URL:', pageVideoUrls)
             for (const vUrl of pageVideoUrls) {
-              if (!capturedUrls.includes(vUrl)) {
+              // 根据配置的格式进行过滤
+              if (!capturedUrls.includes(vUrl) && isUrlAllowed(vUrl)) {
+                console.log('✅ 符合格式过滤:', vUrl.substring(0, 100))
                 capturedUrls.push(vUrl)
               }
             }

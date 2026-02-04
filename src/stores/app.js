@@ -10,6 +10,9 @@ const isElectron = () => {
 const api = {
   checkYtdlp: () => isElectron() ? window.electronAPI.checkYtdlp() : Promise.resolve({ installed: false, version: null }),
   parseVideo: (url, enablePlaylist = true) => isElectron() ? window.electronAPI.parseVideo(url, enablePlaylist) : Promise.reject(new Error('请通过 Electron 启动应用')),
+  smartParse: (url, options) => isElectron() ? window.electronAPI.smartParse(url, options) : Promise.reject(new Error('请通过 Electron 启动应用')),
+  onSmartParseProgress: (callback) => isElectron() ? window.electronAPI.onSmartParseProgress(callback) : null,
+  shouldUseSmartParse: (url) => isElectron() ? window.electronAPI.shouldUseSmartParse(url) : Promise.resolve(false),
   getFormats: (url) => isElectron() ? window.electronAPI.getFormats(url) : Promise.reject(new Error('请通过 Electron 启动应用')),
   startDownload: (task) => isElectron() ? window.electronAPI.startDownload(task) : Promise.reject(new Error('请通过 Electron 启动应用')),
   cancelDownload: (taskId, taskTitle) => isElectron() ? window.electronAPI.cancelDownload(taskId, taskTitle) : Promise.resolve(),
@@ -67,7 +70,8 @@ export const useAppStore = defineStore('app', () => {
     writeDescription: false,
     audioFormat: 'mp3',
     audioQuality: '0',
-    customArgs: ''
+    customArgs: '',
+    smartParseDomains: []  // 智能解析域名白名单
   })
   const history = ref([])
   const customRules = ref([])
@@ -383,7 +387,12 @@ export const useAppStore = defineStore('app', () => {
     const index = downloadQueue.value.findIndex(t => t.id === taskId)
     
     if (index > -1) {
-      // 如果需要删除本地文件
+      // 如果任务正在下载，先取消
+      if (task && (task.status === 'downloading' || task.status === 'preparing' || task.status === 'retrying')) {
+        await api.cancelDownload(taskId, task.title)
+      }
+      
+      // 如果需要删除本地文件（包括临时文件）
       if (deleteLocalFile && task) {
         try {
           const plainTask = JSON.parse(JSON.stringify(toRaw(task)))
@@ -396,7 +405,16 @@ export const useAppStore = defineStore('app', () => {
         } catch (error) {
           showToast('删除本地文件失败: ' + error.message, 'error')
         }
+      } else if (task && (task.status === 'paused' || task.status === 'error')) {
+        // 暂停或出错的任务，也尝试删除临时文件
+        try {
+          const plainTask = JSON.parse(JSON.stringify(toRaw(task)))
+          await api.deleteVideoByTitle(plainTask.title)
+        } catch (error) {
+          console.error('清理临时文件失败:', error)
+        }
       }
+      
       downloadQueue.value.splice(index, 1)
     }
   }
@@ -475,7 +493,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   // 显示消息提示
-  function showToast(message, type = 'info') {
+  function showToast(message, type = 'info', duration = 3000) {
     const id = Date.now()
     toasts.value.push({ id, message, type })
     
@@ -484,7 +502,7 @@ export const useAppStore = defineStore('app', () => {
       if (index > -1) {
         toasts.value.splice(index, 1)
       }
-    }, 3000)
+    }, duration)
   }
 
   // 移除消息提示

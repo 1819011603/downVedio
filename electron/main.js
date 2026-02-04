@@ -7,6 +7,9 @@ const os = require('os')
 let mainWindow
 let ytdlpPath = 'yt-dlp' // 默认使用系统PATH中的yt-dlp
 
+// 智能解析窗口
+let smartParseWindow = null
+
 // 配置文件路径
 const userDataPath = app.getPath('userData')
 const configPath = path.join(userDataPath, 'config.json')
@@ -38,14 +41,20 @@ const defaultConfig = {
   audioQuality: '0',            // 音频质量 0-9
   writeDescription: false,      // 保存描述
   writeThumbnail: false,        // 保存封面
-  customArgs: ''                // 自定义参数
+  customArgs: '',               // 自定义参数
+  // 智能解析域名白名单 - 这些域名直接使用智能解析，不用 yt-dlp
+  smartParseDomains: []         // 例如: ['example.com', 'video.site.com']
 }
 
 // 加载配置
 function loadConfig() {
   try {
     if (fs.existsSync(configPath)) {
-      return { ...defaultConfig, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) }
+      const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      const mergedConfig = { ...defaultConfig, ...fileConfig }
+      console.log('加载配置 - customArgs:', mergedConfig.customArgs || '(空)')
+      console.log('加载配置 - cookiesFromBrowser:', mergedConfig.cookiesFromBrowser || '(空)')
+      return mergedConfig
     }
   } catch (e) {
     console.error('Load config error:', e)
@@ -56,6 +65,8 @@ function loadConfig() {
 // 保存配置
 function saveConfig(config) {
   try {
+    console.log('保存配置 - customArgs:', config.customArgs || '(空)')
+    console.log('保存配置 - cookiesFromBrowser:', config.cookiesFromBrowser || '(空)')
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
     return true
   } catch (e) {
@@ -203,16 +214,56 @@ async function checkYtdlp() {
   })
 }
 
+// 检查 URL 是否匹配智能解析域名白名单
+function shouldUseSmartParse(url) {
+  const config = loadConfig()
+  const domains = config.smartParseDomains || []
+  
+  if (!domains || domains.length === 0) {
+    return false
+  }
+  
+  try {
+    const urlObj = new URL(url)
+    const hostname = urlObj.hostname.toLowerCase()
+    
+    for (const domain of domains) {
+      const domainLower = domain.toLowerCase().trim()
+      if (!domainLower) continue
+      
+      // 支持精确匹配和子域名匹配
+      if (hostname === domainLower || hostname.endsWith('.' + domainLower)) {
+        console.log(`URL ${url} 匹配智能解析域名: ${domain}`)
+        return true
+      }
+    }
+  } catch (e) {
+    console.error('URL 解析错误:', e)
+  }
+  
+  return false
+}
+
 // 根据 URL 查找匹配的自定义规则
 function findMatchingRule(url) {
   const rules = loadCustomRules()
+  console.log('加载的自定义规则数量:', rules.length)
+  if (rules.length > 0) {
+    console.log('规则列表:', rules.map(r => ({ name: r.name, enabled: r.enabled, urlPattern: r.urlPattern, ytdlpArgs: r.ytdlpArgs })))
+  }
   for (const rule of rules) {
-    if (!rule.enabled) continue
+    if (!rule.enabled) {
+      console.log(`规则 "${rule.name}" 已禁用，跳过`)
+      continue
+    }
     try {
       // 尝试匹配 URL 模式
       if (rule.urlPattern) {
         const regex = new RegExp(rule.urlPattern, 'i')
-        if (regex.test(url)) {
+        const matched = regex.test(url)
+        console.log(`规则 "${rule.name}" URL模式匹配: ${matched}`)
+        if (matched) {
+          console.log(`匹配成功！规则: ${rule.name}, ytdlpArgs: ${rule.ytdlpArgs}`)
           return rule
         }
       }
@@ -229,6 +280,423 @@ function findMatchingRule(url) {
   return null
 }
 
+// 智能解析 - 使用 Electron 内置浏览器拦截网络请求
+async function smartParse(url, options = {}) {
+  const config = loadConfig()
+  const timeout = options.timeout || 30000
+  const userWaitTime = options.userWaitTime || 0  // 用户操作等待时间（毫秒）
+  const showBrowser = options.show || false  // 是否显示浏览器窗口
+  const capturedUrls = []
+  let pageTitle = ''
+  let pageThumbnail = ''
+  
+  // 视频流 URL 匹配模式
+  const videoPatterns = [
+    /\.m3u8(\?|$|#)/i,
+    /\.mpd(\?|$|#)/i,
+    /\.mp4(\?|$|#)/i,
+    /\.flv(\?|$|#)/i,
+    /\.ts(\?|$|#)/i,
+    /\.m4s(\?|$|#)/i,
+    /\.webm(\?|$|#)/i,
+    /\.mkv(\?|$|#)/i,
+    /\.avi(\?|$|#)/i,
+    /\.mov(\?|$|#)/i,
+    /video.*\.m3u8/i,
+    /playlist.*\.m3u8/i,
+    /manifest.*\.mpd/i,
+    /stream.*\.(mp4|flv|m3u8)/i,
+    /\/video\//i,           // URL 路径包含 /video/
+    /\/play\//i,            // URL 路径包含 /play/
+    /\/media\//i,           // URL 路径包含 /media/
+    /\/hls\//i,             // HLS 流
+    /\/dash\//i,            // DASH 流
+    /videoplayback/i,       // YouTube 等
+    /googlevideo\.com/i,    // Google 视频
+    /\.akamaized\.net.*video/i,  // Akamai CDN 视频
+    /cloudfront.*video/i,   // CloudFront CDN 视频
+    /\.cdn.*\.(mp4|m3u8|ts)/i,  // 通用 CDN
+  ]
+
+  // 需要排除的 URL 模式
+  const excludePatterns = [
+    /\.css(\?|$)/i,
+    /\.js(\?|$)/i,
+    /\.jpg(\?|$)/i,
+    /\.jpeg(\?|$)/i,
+    /\.png(\?|$)/i,
+    /\.gif(\?|$)/i,
+    /\.svg(\?|$)/i,
+    /\.ico(\?|$)/i,
+    /\.woff/i,
+    /\.ttf/i,
+    /\.eot/i,
+    /google.*analytics/i,
+    /facebook.*pixel/i,
+    /doubleclick/i,
+    /\.vtt(\?|$)/i,  // 字幕文件
+    /\.srt(\?|$)/i,  // 字幕文件
+    /\.json(\?|$)/i, // JSON 数据
+    /\.xml(\?|$)/i,  // XML 数据（除了 mpd）
+    /fonts\./i,      // 字体
+    /tracking/i,     // 追踪
+    /analytics/i,    // 分析
+    /beacon/i,       // 信标
+    /telemetry/i,    // 遥测
+  ]
+
+  console.log('========== 智能解析开始 ==========')
+  console.log('目标 URL:', url)
+  console.log('显示浏览器:', showBrowser)
+  console.log('用户操作等待时间:', userWaitTime, 'ms')
+
+  // 关闭之前的窗口
+  if (smartParseWindow && !smartParseWindow.isDestroyed()) {
+    smartParseWindow.close()
+  }
+
+  // 创建浏览器窗口
+  smartParseWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    show: showBrowser,
+    title: showBrowser ? '智能解析 - 请登录或操作后等待解析完成' : '智能解析',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: true,
+    }
+  })
+  
+  if (showBrowser) {
+    smartParseWindow.setTitle('智能解析 - 请登录或操作，完成后请等待')
+  }
+
+  return new Promise((resolve, reject) => {
+
+    const session = smartParseWindow.webContents.session
+    let timeoutId = null
+    let resolved = false
+
+    // 清理函数
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      if (smartParseWindow && !smartParseWindow.isDestroyed()) {
+        smartParseWindow.close()
+        smartParseWindow = null
+      }
+    }
+
+    // 完成解析
+    const finishParse = () => {
+      if (resolved) return
+      resolved = true
+      
+      console.log('捕获到的视频 URL 数量:', capturedUrls.length)
+      console.log('========== 智能解析结束 ==========')
+
+      // 优先返回 m3u8 和 mpd
+      const sortedUrls = [...new Set(capturedUrls)].sort((a, b) => {
+        const aScore = a.includes('.m3u8') ? 3 : a.includes('.mpd') ? 2 : a.includes('.mp4') ? 1 : 0
+        const bScore = b.includes('.m3u8') ? 3 : b.includes('.mpd') ? 2 : b.includes('.mp4') ? 1 : 0
+        return bScore - aScore
+      })
+
+      cleanup()
+      resolve({
+        success: sortedUrls.length > 0,
+        title: pageTitle || '未知标题',
+        thumbnail: pageThumbnail,
+        videoUrls: sortedUrls,
+        bestUrl: sortedUrls[0] || null
+      })
+    }
+
+    // 监听网络请求（使用 Electron 的 webRequest API）
+    session.webRequest.onBeforeRequest((details, callback) => {
+      const reqUrl = details.url
+      
+      // 跳过 data: 和 blob: URL
+      if (reqUrl.startsWith('data:') || reqUrl.startsWith('blob:')) {
+        callback({ cancel: false })
+        return
+      }
+      
+      // 检查是否是视频流
+      const isVideo = videoPatterns.some(pattern => pattern.test(reqUrl))
+      const isExcluded = excludePatterns.some(pattern => pattern.test(reqUrl))
+      
+      if (isVideo && !isExcluded) {
+        console.log('✅ 捕获视频请求:', reqUrl.substring(0, 200))
+        if (!capturedUrls.includes(reqUrl)) {
+          capturedUrls.push(reqUrl)
+          
+          // 发送进度更新
+          if (mainWindow) {
+            mainWindow.webContents.send('smart-parse:progress', {
+              status: 'found',
+              message: `已捕获 ${capturedUrls.length} 个视频地址`
+            })
+          }
+        }
+      }
+      
+      callback({ cancel: false })
+    })
+
+    // 监听响应头（检查 Content-Type）
+    session.webRequest.onHeadersReceived((details, callback) => {
+      const reqUrl = details.url
+      
+      // 跳过已处理的 URL
+      if (reqUrl.startsWith('data:') || reqUrl.startsWith('blob:')) {
+        callback({ cancel: false })
+        return
+      }
+      
+      const contentType = details.responseHeaders?.['content-type']?.[0] || 
+                          details.responseHeaders?.['Content-Type']?.[0] || ''
+      
+      // 通过 Content-Type 检测视频
+      const isVideoContentType = 
+        contentType.includes('mpegurl') ||           // m3u8
+        contentType.includes('dash+xml') ||          // mpd
+        contentType.includes('video/') ||            // video/*
+        contentType.includes('application/octet-stream') ||  // 二进制流（可能是视频）
+        contentType.includes('binary/octet-stream')
+      
+      if (isVideoContentType && !capturedUrls.includes(reqUrl)) {
+        // 排除明显不是视频的
+        const isExcluded = excludePatterns.some(pattern => pattern.test(reqUrl))
+        if (!isExcluded) {
+          console.log('✅ 捕获视频响应:', reqUrl.substring(0, 200), '类型:', contentType)
+          capturedUrls.push(reqUrl)
+          
+          if (mainWindow) {
+            mainWindow.webContents.send('smart-parse:progress', {
+              status: 'found',
+              message: `已捕获 ${capturedUrls.length} 个视频地址`
+            })
+          }
+        }
+      }
+      
+      callback({ cancel: false })
+    })
+
+    // 发送进度更新
+    if (mainWindow) {
+      mainWindow.webContents.send('smart-parse:progress', {
+        status: 'loading',
+        message: '正在加载页面...'
+      })
+    }
+
+    // 页面加载完成
+    smartParseWindow.webContents.on('did-finish-load', async () => {
+      console.log('页面加载完成')
+      
+      // 获取页面标题
+      pageTitle = smartParseWindow.webContents.getTitle()
+      
+      // 尝试获取缩略图
+      try {
+        pageThumbnail = await smartParseWindow.webContents.executeJavaScript(`
+          (function() {
+            const og = document.querySelector('meta[property="og:image"]');
+            if (og) return og.content;
+            const twitter = document.querySelector('meta[name="twitter:image"]');
+            if (twitter) return twitter.content;
+            return '';
+          })()
+        `)
+      } catch (e) {}
+
+      // 如果设置了用户操作等待时间，给用户时间进行操作
+      if (userWaitTime > 0 && showBrowser) {
+        const waitSeconds = Math.ceil(userWaitTime / 1000)
+        console.log(`等待用户操作 ${waitSeconds} 秒...`)
+        
+        // 倒计时提示
+        for (let i = waitSeconds; i > 0; i--) {
+          if (mainWindow) {
+            mainWindow.webContents.send('smart-parse:progress', {
+              status: 'user-wait',
+              message: `请在浏览器中操作（登录/点击播放等），剩余 ${i} 秒...`
+            })
+          }
+          smartParseWindow.setTitle(`智能解析 - 请操作，剩余 ${i} 秒`)
+          await new Promise(r => setTimeout(r, 1000))
+        }
+        
+        console.log('用户操作等待时间结束')
+      }
+
+      // 发送进度更新
+      if (mainWindow) {
+        mainWindow.webContents.send('smart-parse:progress', {
+          status: 'waiting',
+          message: '等待视频加载...'
+        })
+      }
+
+      // 尝试从页面提取视频 URL
+      const extractVideoFromPage = async () => {
+        try {
+          const pageVideoUrls = await smartParseWindow.webContents.executeJavaScript(`
+            (function() {
+              const urls = [];
+              
+              // 1. 从 video 标签提取
+              document.querySelectorAll('video').forEach(video => {
+                if (video.src && !video.src.startsWith('blob:')) {
+                  urls.push(video.src);
+                }
+                // 检查 source 子元素
+                video.querySelectorAll('source').forEach(source => {
+                  if (source.src && !source.src.startsWith('blob:')) {
+                    urls.push(source.src);
+                  }
+                });
+              });
+              
+              // 2. 从 iframe 中的 video 标签（同源）
+              try {
+                document.querySelectorAll('iframe').forEach(iframe => {
+                  try {
+                    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                    if (iframeDoc) {
+                      iframeDoc.querySelectorAll('video').forEach(video => {
+                        if (video.src && !video.src.startsWith('blob:')) {
+                          urls.push(video.src);
+                        }
+                      });
+                    }
+                  } catch(e) {}
+                });
+              } catch(e) {}
+              
+              // 3. 从页面中查找可能的视频 URL
+              const scripts = document.querySelectorAll('script');
+              const urlPattern = /(https?:\\/\\/[^"'\\s]+\\.(m3u8|mpd|mp4|flv)[^"'\\s]*)/gi;
+              scripts.forEach(script => {
+                const matches = script.textContent.match(urlPattern);
+                if (matches) {
+                  urls.push(...matches);
+                }
+              });
+              
+              // 4. 从 data 属性查找
+              document.querySelectorAll('[data-src], [data-video], [data-url]').forEach(el => {
+                const src = el.dataset.src || el.dataset.video || el.dataset.url;
+                if (src && (src.includes('.m3u8') || src.includes('.mpd') || src.includes('.mp4'))) {
+                  urls.push(src);
+                }
+              });
+              
+              return [...new Set(urls)];
+            })()
+          `)
+          
+          if (pageVideoUrls && pageVideoUrls.length > 0) {
+            console.log('从页面提取到视频 URL:', pageVideoUrls)
+            for (const vUrl of pageVideoUrls) {
+              if (!capturedUrls.includes(vUrl)) {
+                capturedUrls.push(vUrl)
+              }
+            }
+          }
+        } catch (e) {
+          console.log('提取页面视频 URL 失败:', e.message)
+        }
+      }
+
+      // 等待 3 秒让视频请求发出
+      setTimeout(async () => {
+        // 先尝试从页面提取视频 URL
+        await extractVideoFromPage()
+        
+        // 如果还没捕获到视频，尝试点击播放按钮
+        if (capturedUrls.length === 0) {
+          console.log('尝试点击播放按钮...')
+          
+          if (mainWindow) {
+            mainWindow.webContents.send('smart-parse:progress', {
+              status: 'clicking',
+              message: '尝试触发视频播放...'
+            })
+          }
+
+          try {
+            await smartParseWindow.webContents.executeJavaScript(`
+              (function() {
+                // 常见的播放按钮选择器
+                const selectors = [
+                  'button[class*="play"]',
+                  'div[class*="play"]',
+                  '.play-button',
+                  '.video-play',
+                  '.btn-play',
+                  '[aria-label*="play" i]',
+                  '[aria-label*="播放"]',
+                  '.vjs-big-play-button',
+                  '.dplayer-play-icon',
+                  'video'
+                ];
+                
+                for (const selector of selectors) {
+                  const el = document.querySelector(selector);
+                  if (el) {
+                    el.click();
+                    console.log('点击了:', selector);
+                    break;
+                  }
+                }
+              })()
+            `)
+          } catch (e) {
+            console.log('点击播放按钮失败:', e.message)
+          }
+
+          // 再等待 3 秒后再次尝试提取
+          setTimeout(async () => {
+            await extractVideoFromPage()
+            finishParse()
+          }, 3000)
+        } else {
+          // 已经捕获到视频，再等 1 秒确保捕获完整
+          setTimeout(finishParse, 1000)
+        }
+      }, 3000)
+    })
+
+    // 加载错误处理
+    smartParseWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      if (resolved) return
+      console.error('页面加载失败:', errorCode, errorDescription)
+      cleanup()
+      reject(new Error(`页面加载失败: ${errorDescription}`))
+    })
+
+    // 超时处理
+    timeoutId = setTimeout(() => {
+      if (!resolved) {
+        console.log('解析超时，返回已捕获的结果')
+        finishParse()
+      }
+    }, timeout)
+
+    // 加载页面
+    smartParseWindow.loadURL(url).catch(err => {
+      if (!resolved) {
+        resolved = true
+        cleanup()
+        reject(new Error(`无法加载页面: ${err.message}`))
+      }
+    })
+  })
+}
+
 // 解析视频信息
 async function parseVideoInfo(url, enablePlaylist = true) {
   const config = loadConfig()
@@ -243,6 +711,12 @@ async function parseVideoInfo(url, enablePlaylist = true) {
       '--no-download',
       '--no-warnings'
     ]
+    
+    // YouTube 需要 js-runtimes 来解密签名获取完整格式列表
+    const isYouTube = url.includes('youtube.com') || url.includes('youtu.be')
+    if (isYouTube) {
+      args.push('--js-runtimes', 'node')
+    }
     
     // 根据参数决定是否支持播放列表
     if (!enablePlaylist) {
@@ -264,29 +738,46 @@ async function parseVideoInfo(url, enablePlaylist = true) {
       args.push('--proxy', config.proxy)
     }
 
-    // 添加 cookie
-    if (config.cookieFile && fs.existsSync(config.cookieFile)) {
-      args.push('--cookies', config.cookieFile)
-    } else if (config.cookiesFromBrowser && config.cookiesFromBrowser !== 'none') {
+    // 添加 cookie - 优先使用浏览器 cookie
+    if (config.cookiesFromBrowser && config.cookiesFromBrowser !== 'none') {
       args.push('--cookies-from-browser', config.cookiesFromBrowser)
+    } else if (config.cookieFile && fs.existsSync(config.cookieFile)) {
+      args.push('--cookies', config.cookieFile)
     }
 
     // 应用匹配规则中的自定义 yt-dlp 参数
+    console.log('========== 规则匹配 ==========')
+    console.log('URL:', url)
+    console.log('匹配到的规则:', matchedRule ? JSON.stringify({ name: matchedRule.name, ytdlpArgs: matchedRule.ytdlpArgs }) : '无')
     if (matchedRule && matchedRule.ytdlpArgs) {
       const ruleArgsArray = matchedRule.ytdlpArgs.split(/\s+/).filter(arg => arg.trim())
-      args.push(...ruleArgsArray)
-      console.log('应用规则参数:', matchedRule.name, '->', matchedRule.ytdlpArgs)
+      // 避免重复添加已存在的参数
+      ruleArgsArray.forEach(arg => {
+        if (!args.includes(arg)) {
+          args.push(arg)
+        }
+      })
+      console.log('应用规则参数:', ruleArgsArray)
     }
 
     // 全局自定义参数
+    console.log('全局自定义参数:', config.customArgs || '(空)')
     if (config.customArgs) {
       const customArgsArray = config.customArgs.split(/\s+/).filter(arg => arg.trim())
-      args.push(...customArgsArray)
+      // 避免重复添加已存在的参数
+      customArgsArray.forEach(arg => {
+        if (!args.includes(arg)) {
+          args.push(arg)
+        }
+      })
+      console.log('应用全局参数:', customArgsArray)
     }
 
     args.push(url)
 
-    console.log('Parse args:', args.join(' '))
+    console.log('========== 最终解析命令 ==========')
+    console.log('yt-dlp', args.join(' '))
+    console.log('===================================')
 
     const parseProcess = spawn(ytdlpPath, args)
     let stdout = ''
@@ -436,6 +927,12 @@ function downloadVideo(task, onProgress) {
       '--progress',
       '--no-colors'
     ]
+
+    // YouTube 需要 js-runtimes 来解密签名
+    const isYouTube = task.url.includes('youtube.com') || task.url.includes('youtu.be')
+    if (isYouTube) {
+      args.push('--js-runtimes', 'node')
+    }
 
     // 下载线程数
     if (config.downloadThreads && config.downloadThreads > 1) {
@@ -758,6 +1255,20 @@ app.whenReady().then(() => {
     }
   })
 
+  // 智能解析（使用 Playwright 拦截网络请求）
+  ipcMain.handle('video:smartParse', async (_, url, options = {}) => {
+    try {
+      return await smartParse(url, options)
+    } catch (error) {
+      throw new Error(error.message || String(error))
+    }
+  })
+
+  // 检查 URL 是否应该使用智能解析（匹配域名白名单）
+  ipcMain.handle('video:shouldUseSmartParse', async (_, url) => {
+    return shouldUseSmartParse(url)
+  })
+
   // 获取格式
   ipcMain.handle('video:formats', async (_, url) => {
     try {
@@ -797,7 +1308,7 @@ app.whenReady().then(() => {
       }
       activeDownloads.delete(taskId)
       
-      // 尝试删除 .part 临时文件
+      // 尝试删除临时文件（包括分片文件）
       if (taskTitle) {
         try {
           const config = loadConfig()
@@ -805,18 +1316,28 @@ app.whenReady().then(() => {
           const downloadPath = config.downloadPath
           const files = fs.readdirSync(downloadPath)
           
+          // 匹配各种临时文件格式：
+          // - .part (未完成的下载)
+          // - .part-Frag1, .part-Frag2 等 (多线程分片)
+          // - .ytdl (yt-dlp 临时文件)
+          // - .temp (临时文件)
+          // - .f*.mp4.part 等 (格式特定的临时文件)
+          const tempFilePattern = /\.(part|part-Frag\d+|ytdl|temp)$/i
+          
+          let deletedCount = 0
           for (const file of files) {
-            // 匹配 .part 文件和相关临时文件
-            if (file.includes(cleanTitle) && (file.endsWith('.part') || file.endsWith('.ytdl') || file.endsWith('.temp'))) {
+            if (file.includes(cleanTitle) && tempFilePattern.test(file)) {
               const fullPath = path.join(downloadPath, file)
               try {
                 fs.unlinkSync(fullPath)
                 console.log('已删除临时文件:', fullPath)
+                deletedCount++
               } catch (e) {
                 console.error('删除临时文件失败:', fullPath, e)
               }
             }
           }
+          console.log(`共删除 ${deletedCount} 个临时文件`)
         } catch (e) {
           console.error('清理临时文件失败:', e)
         }
@@ -988,7 +1509,7 @@ app.whenReady().then(() => {
     }
   })
 
-  // 按标题精确匹配删除下载目录中的视频文件
+  // 按标题精确匹配删除下载目录中的视频文件和临时文件
   ipcMain.handle('file:deleteByTitle', async (_, title) => {
     const config = loadConfig()
     const downloadPath = config.downloadPath
@@ -1004,6 +1525,9 @@ app.whenReady().then(() => {
     // 支持的视频/音频扩展名
     const extensions = ['mp4', 'mkv', 'webm', 'mp3', 'm4a', 'flv', 'avi', 'mov', 'opus', 'aac', 'wav', 'flac']
     
+    // 临时文件模式
+    const tempFilePattern = /\.(part|part-Frag\d+|ytdl|temp)$/i
+    
     try {
       if (!fs.existsSync(downloadPath)) {
         return { deleted: false, deletedFiles: [], error: '下载目录不存在' }
@@ -1012,7 +1536,24 @@ app.whenReady().then(() => {
       const files = fs.readdirSync(downloadPath)
       
       for (const file of files) {
-        // 获取文件名（不含扩展名）
+        // 检查文件名是否包含标题
+        if (!file.includes(cleanTitle)) continue
+        
+        const fullPath = path.join(downloadPath, file)
+        
+        // 检查是否是临时文件
+        if (tempFilePattern.test(file)) {
+          try {
+            fs.unlinkSync(fullPath)
+            deletedFiles.push(file)
+            console.log('已删除临时文件:', fullPath)
+          } catch (e) {
+            console.error('删除临时文件失败:', fullPath, e)
+          }
+          continue
+        }
+        
+        // 检查是否是视频/音频文件
         const ext = path.extname(file).toLowerCase().slice(1)
         const basename = path.basename(file, path.extname(file))
         
@@ -1022,7 +1563,6 @@ app.whenReady().then(() => {
         // 精确匹配文件名（包括可能的时间戳后缀）
         // 匹配规则：完全匹配标题，或者 标题_时间戳 格式
         if (basename === cleanTitle || basename.match(new RegExp(`^${escapeRegExp(cleanTitle)}_\\d+$`))) {
-          const fullPath = path.join(downloadPath, file)
           try {
             fs.unlinkSync(fullPath)
             deletedFiles.push(file)

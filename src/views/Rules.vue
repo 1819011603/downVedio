@@ -6,7 +6,7 @@
           <svg viewBox="0 0 24 24" width="24" height="24">
             <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="2" fill="none"/>
           </svg>
-          自定义规则
+          网站规则
         </h1>
       </div>
       
@@ -29,8 +29,9 @@
         </svg>
       </div>
       <div class="info-content">
-        <h3>关于自定义规则</h3>
-        <p>当 yt-dlp 无法解析某些网站时，可以通过自定义规则来提取视频信息。规则使用 CSS 选择器或 JSON Path 来定位页面中的视频元素。</p>
+        <h3>网站规则说明</h3>
+        <p>为特定网站配置额外的 yt-dlp 参数。当 URL 匹配规则时，会自动添加对应参数。</p>
+        <p class="info-note">注意：此功能仅能增强 yt-dlp 已支持的网站，不能让 yt-dlp 支持新网站。</p>
       </div>
     </div>
     
@@ -43,7 +44,7 @@
           </svg>
         </div>
         <h2>暂无自定义规则</h2>
-        <p>点击上方按钮添加第一条规则</p>
+        <p>点击上方按钮添加规则，或选择下方预设模板</p>
       </div>
       
       <div 
@@ -87,7 +88,7 @@
                 type="text" 
                 class="input" 
                 v-model="rule.name"
-                placeholder="例如：某视频网站"
+                placeholder="例如：YouTube"
               />
             </div>
             
@@ -97,7 +98,7 @@
                 type="text" 
                 class="input" 
                 v-model="rule.domain"
-                placeholder="例如：example.com"
+                placeholder="例如：youtube.com"
               />
             </div>
           </div>
@@ -108,80 +109,23 @@
               type="text" 
               class="input font-mono" 
               v-model="rule.urlPattern"
-              placeholder="例如：/video/(\d+)"
+              placeholder="例如：youtube\.com|youtu\.be"
             />
-          </div>
-          
-          <div class="form-section">
-            <h4>提取规则 (CSS 选择器)</h4>
-            
-            <div class="form-grid">
-              <div class="form-group">
-                <label>视频标题</label>
-                <input 
-                  type="text" 
-                  class="input font-mono" 
-                  v-model="rule.selectors.title"
-                  placeholder="例如：h1.video-title"
-                />
-              </div>
-              
-              <div class="form-group">
-                <label>视频源地址</label>
-                <input 
-                  type="text" 
-                  class="input font-mono" 
-                  v-model="rule.selectors.videoUrl"
-                  placeholder="例如：video source[src]"
-                />
-              </div>
-            </div>
-            
-            <div class="form-grid">
-              <div class="form-group">
-                <label>封面图片</label>
-                <input 
-                  type="text" 
-                  class="input font-mono" 
-                  v-model="rule.selectors.thumbnail"
-                  placeholder="例如：meta[property='og:image']"
-                />
-              </div>
-              
-              <div class="form-group">
-                <label>作者/上传者</label>
-                <input 
-                  type="text" 
-                  class="input font-mono" 
-                  v-model="rule.selectors.uploader"
-                  placeholder="例如：.uploader-name"
-                />
-              </div>
-            </div>
-            
-            <div class="form-group">
-              <label>视频时长</label>
-              <input 
-                type="text" 
-                class="input font-mono" 
-                v-model="rule.selectors.duration"
-                placeholder="例如：.video-duration"
-              />
-            </div>
+            <p class="form-hint">使用正则表达式匹配 URL，留空则使用域名匹配</p>
           </div>
           
           <div class="form-section">
             <h4>yt-dlp 参数</h4>
             
             <div class="form-group">
-              <label>自定义 yt-dlp 参数</label>
+              <label>自定义参数</label>
               <input 
                 type="text" 
                 class="input font-mono" 
                 v-model="rule.ytdlpArgs"
                 placeholder="例如：--js-runtimes node --no-check-certificate"
               />
-              <p class="form-hint">当 URL 匹配该规则时，将自动添加这些参数到 yt-dlp 命令</p>
+              <p class="form-hint">当 URL 匹配时，自动添加这些参数</p>
             </div>
             
             <div class="args-presets">
@@ -196,28 +140,14 @@
             </div>
           </div>
           
-          <div class="form-section">
-            <h4>高级选项</h4>
-            
-            <div class="form-group">
-              <label>请求头 (JSON 格式)</label>
-              <textarea 
-                class="textarea font-mono" 
-                v-model="rule.headers"
-                placeholder='{"Referer": "https://example.com"}'
-                rows="3"
-              ></textarea>
-            </div>
-            
-            <div class="form-group">
-              <label>自定义脚本 (JavaScript)</label>
-              <textarea 
-                class="textarea font-mono" 
-                v-model="rule.script"
-                placeholder="// 返回 { title, videoUrl, thumbnail, uploader, duration }"
-                rows="5"
-              ></textarea>
-            </div>
+          <div class="form-group">
+            <label>自定义请求头 (JSON 格式，可选)</label>
+            <textarea 
+              class="textarea font-mono" 
+              v-model="rule.headers"
+              placeholder='{"Referer": "https://example.com"}'
+              rows="2"
+            ></textarea>
           </div>
           
           <div class="editor-actions">
@@ -230,7 +160,7 @@
     
     <!-- 预设规则 -->
     <section class="preset-section">
-      <h2 class="section-title">预设规则模板</h2>
+      <h2 class="section-title">预设模板</h2>
       <div class="preset-grid">
         <button 
           v-for="preset in presets" 
@@ -255,144 +185,66 @@ const appStore = useAppStore()
 const rules = ref([])
 const editingIndex = ref(-1)
 
-// 预设模板
+// 精简的预设模板
 const presets = [
   {
-    name: 'YouTube (推荐)',
-    description: '解决 YouTube 403/400 错误，需要 Node.js',
+    name: 'YouTube',
+    description: '解决 403/400 错误',
     rule: {
       name: 'YouTube',
       domain: 'youtube.com',
       urlPattern: 'youtube\\.com|youtu\\.be',
-      selectors: {
-        title: '',
-        videoUrl: '',
-        thumbnail: '',
-        uploader: '',
-        duration: ''
-      },
       ytdlpArgs: '--js-runtimes node',
       headers: '',
-      script: '',
       enabled: true
     }
   },
   {
     name: 'YouTube (完整修复)',
-    description: '包含多个修复参数，解决各种问题',
+    description: '多参数修复',
     rule: {
       name: 'YouTube 完整修复',
       domain: 'youtube.com',
       urlPattern: 'youtube\\.com|youtu\\.be',
-      selectors: {
-        title: '',
-        videoUrl: '',
-        thumbnail: '',
-        uploader: '',
-        duration: ''
-      },
       ytdlpArgs: '--js-runtimes node --extractor-args youtube:player_client=web',
       headers: '',
-      script: '',
       enabled: true
     }
   },
   {
     name: 'Bilibili',
-    description: 'B站视频特殊处理',
+    description: 'B站特殊处理',
     rule: {
       name: 'Bilibili',
       domain: 'bilibili.com',
       urlPattern: 'bilibili\\.com|b23\\.tv',
-      selectors: {
-        title: '',
-        videoUrl: '',
-        thumbnail: '',
-        uploader: '',
-        duration: ''
-      },
       ytdlpArgs: '--no-check-certificate',
       headers: '',
-      script: '',
       enabled: true
     }
   },
   {
-    name: '通用 HTML5 视频',
-    description: '提取页面中的 video 标签',
+    name: 'Twitter/X',
+    description: '推特视频',
     rule: {
-      name: '通用 HTML5 视频',
-      domain: '*',
-      urlPattern: '.*',
-      selectors: {
-        title: 'title',
-        videoUrl: 'video source[src], video[src]',
-        thumbnail: 'meta[property="og:image"]',
-        uploader: '',
-        duration: ''
-      },
-      ytdlpArgs: '',
+      name: 'Twitter',
+      domain: 'twitter.com',
+      urlPattern: 'twitter\\.com|x\\.com',
+      ytdlpArgs: '--no-check-certificate',
       headers: '',
-      script: '',
       enabled: true
     }
   },
   {
-    name: 'Open Graph 元数据',
-    description: '提取 og:video 标签',
+    name: '通用 HTTPS 问题',
+    description: '解决证书错误',
     rule: {
-      name: 'Open Graph 视频',
+      name: '跳过证书验证',
       domain: '*',
-      urlPattern: '.*',
-      selectors: {
-        title: 'meta[property="og:title"]',
-        videoUrl: 'meta[property="og:video"], meta[property="og:video:url"]',
-        thumbnail: 'meta[property="og:image"]',
-        uploader: '',
-        duration: ''
-      },
-      ytdlpArgs: '',
+      urlPattern: '',
+      ytdlpArgs: '--no-check-certificate',
       headers: '',
-      script: '',
-      enabled: true
-    }
-  },
-  {
-    name: 'JSON-LD 结构化数据',
-    description: '提取 schema.org VideoObject',
-    rule: {
-      name: 'JSON-LD 视频',
-      domain: '*',
-      urlPattern: '.*',
-      selectors: {
-        title: '',
-        videoUrl: '',
-        thumbnail: '',
-        uploader: '',
-        duration: ''
-      },
-      ytdlpArgs: '',
-      headers: '',
-      script: `
-// 提取 JSON-LD 中的视频信息
-const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-for (const script of scripts) {
-  try {
-    const data = JSON.parse(script.textContent);
-    if (data['@type'] === 'VideoObject') {
-      return {
-        title: data.name,
-        videoUrl: data.contentUrl || data.embedUrl,
-        thumbnail: data.thumbnailUrl,
-        uploader: data.author?.name,
-        duration: data.duration
-      };
-    }
-  } catch (e) {}
-}
-return null;
-      `.trim(),
-      enabled: true
+      enabled: false
     }
   }
 ]
@@ -405,16 +257,8 @@ const createEmptyRule = () => ({
   name: '',
   domain: '',
   urlPattern: '',
-  selectors: {
-    title: '',
-    videoUrl: '',
-    thumbnail: '',
-    uploader: '',
-    duration: ''
-  },
   ytdlpArgs: '',
   headers: '',
-  script: '',
   enabled: true
 })
 
@@ -446,7 +290,6 @@ const deleteRule = (index) => {
 }
 
 const cancelEdit = () => {
-  // 如果是新添加的空规则，删除它
   const rule = rules.value[editingIndex.value]
   if (!rule.name && !rule.domain) {
     rules.value.splice(editingIndex.value, 1)
@@ -468,14 +311,15 @@ const applyPreset = (preset) => {
 
 <style lang="scss" scoped>
 .rules-view {
+  padding: var(--spacing-lg);
   max-width: 900px;
   margin: 0 auto;
 }
 
 .page-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   margin-bottom: var(--spacing-lg);
 }
 
@@ -484,7 +328,7 @@ const applyPreset = (preset) => {
   align-items: center;
   gap: var(--spacing-sm);
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-primary);
   
   svg {
@@ -492,14 +336,13 @@ const applyPreset = (preset) => {
   }
 }
 
-// 说明卡片
 .info-card {
   display: flex;
   gap: var(--spacing-md);
   padding: var(--spacing-md);
-  background: rgba(0, 240, 255, 0.05);
-  border: 1px solid rgba(0, 240, 255, 0.2);
-  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   margin-bottom: var(--spacing-lg);
 }
 
@@ -512,49 +355,23 @@ const applyPreset = (preset) => {
   h3 {
     font-size: 14px;
     font-weight: 600;
-    color: var(--primary);
+    color: var(--text-primary);
     margin-bottom: var(--spacing-xs);
   }
   
   p {
     font-size: 13px;
     color: var(--text-secondary);
-    line-height: 1.6;
+    line-height: 1.5;
+  }
+  
+  .info-note {
+    margin-top: var(--spacing-xs);
+    color: var(--warning);
+    font-size: 12px;
   }
 }
 
-// 空状态
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  text-align: center;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-
-.empty-icon {
-  margin-bottom: var(--spacing-md);
-  color: var(--text-muted);
-  opacity: 0.5;
-}
-
-.empty-state h2 {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: var(--spacing-xs);
-}
-
-.empty-state p {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-// 规则列表
 .rules-list {
   display: flex;
   flex-direction: column;
@@ -562,16 +379,36 @@ const applyPreset = (preset) => {
   margin-bottom: var(--spacing-xl);
 }
 
-.rule-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+.empty-state {
+  text-align: center;
+  padding: var(--spacing-xl) var(--spacing-lg);
+  background: var(--bg-secondary);
   border-radius: var(--radius-lg);
-  overflow: hidden;
-  transition: all 0.2s;
+  border: 1px dashed var(--border-light);
   
-  &:hover {
-    border-color: var(--border-light);
+  .empty-icon {
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-md);
   }
+  
+  h2 {
+    font-size: 18px;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+  }
+  
+  p {
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+}
+
+.rule-card {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  overflow: hidden;
+  transition: all 0.2s ease;
   
   &.editing {
     border-color: var(--primary);
@@ -584,8 +421,8 @@ const applyPreset = (preset) => {
 
 .rule-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   padding: var(--spacing-md);
 }
 
@@ -595,47 +432,42 @@ const applyPreset = (preset) => {
   gap: var(--spacing-md);
 }
 
-// 开关样式
 .rule-toggle {
   position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
   
   input {
-    opacity: 0;
-    width: 0;
-    height: 0;
+    display: none;
   }
-}
-
-.toggle-slider {
-  position: absolute;
-  cursor: pointer;
-  inset: 0;
-  background: var(--bg-dark);
-  border-radius: 22px;
-  transition: 0.3s;
   
-  &::before {
+  .toggle-slider {
     position: absolute;
-    content: "";
-    height: 16px;
-    width: 16px;
-    left: 3px;
-    bottom: 3px;
-    background: var(--text-muted);
-    border-radius: 50%;
-    transition: 0.3s;
+    inset: 0;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    transition: background 0.2s;
+    
+    &::before {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      top: 2px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
   }
-}
-
-.rule-toggle input:checked + .toggle-slider {
-  background: var(--primary-glow);
   
-  &::before {
+  input:checked + .toggle-slider {
     background: var(--primary);
-    transform: translateX(18px);
+    
+    &::before {
+      transform: translateX(16px);
+    }
   }
 }
 
@@ -647,10 +479,9 @@ const applyPreset = (preset) => {
 
 .rule-domain {
   font-size: 12px;
-  font-family: var(--font-mono);
   color: var(--text-muted);
+  background: var(--bg-tertiary);
   padding: 2px 8px;
-  background: var(--bg-dark);
   border-radius: var(--radius-sm);
 }
 
@@ -659,59 +490,82 @@ const applyPreset = (preset) => {
   gap: var(--spacing-xs);
 }
 
-// 编辑器
 .rule-editor {
-  padding: var(--spacing-lg);
-  border-top: 1px solid var(--border);
-  background: var(--bg-dark);
+  padding: var(--spacing-md);
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
 }
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
 }
 
 .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
   margin-bottom: var(--spacing-md);
   
   label {
-    display: block;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
-    margin-bottom: var(--spacing-xs);
+  }
+  
+  .input, .textarea {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+    
+    &:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    
+    &::placeholder {
+      color: var(--text-muted);
+    }
+  }
+  
+  .textarea {
+    resize: vertical;
+    min-height: 60px;
   }
 }
 
+.form-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .form-section {
-  margin-top: var(--spacing-lg);
-  padding-top: var(--spacing-lg);
-  border-top: 1px solid var(--border);
+  margin-bottom: var(--spacing-md);
   
   h4 {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
-    margin-bottom: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
   }
 }
 
-.form-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: var(--spacing-xs);
-}
-
 .args-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
   margin-top: var(--spacing-sm);
 }
 
 .preset-label {
   font-size: 12px;
-  color: var(--text-secondary);
-  display: block;
-  margin-bottom: var(--spacing-xs);
+  color: var(--text-muted);
 }
 
 .preset-tags {
@@ -720,20 +574,18 @@ const applyPreset = (preset) => {
   gap: var(--spacing-xs);
   
   code {
-    padding: 4px 8px;
-    font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--text-secondary);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    padding: 4px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all 0.2s;
     
     &:hover {
+      background: var(--primary);
+      color: white;
       border-color: var(--primary);
-      color: var(--primary);
-      background: var(--primary-glow);
     }
   }
 }
@@ -742,12 +594,11 @@ const applyPreset = (preset) => {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);
-  margin-top: var(--spacing-lg);
+  margin-top: var(--spacing-md);
   padding-top: var(--spacing-md);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-light);
 }
 
-// 预设规则
 .preset-section {
   margin-top: var(--spacing-xl);
 }
@@ -761,7 +612,7 @@ const applyPreset = (preset) => {
 
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--spacing-md);
 }
 
@@ -770,27 +621,74 @@ const applyPreset = (preset) => {
   flex-direction: column;
   gap: var(--spacing-xs);
   padding: var(--spacing-md);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
   cursor: pointer;
-  text-align: left;
   transition: all 0.2s;
+  text-align: left;
   
   &:hover {
     border-color: var(--primary);
-    background: rgba(0, 240, 255, 0.05);
+    background: var(--bg-tertiary);
+  }
+  
+  .preset-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  
+  .preset-desc {
+    font-size: 12px;
+    color: var(--text-muted);
   }
 }
 
-.preset-name {
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
   font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  
+  &-primary {
+    background: var(--primary);
+    color: white;
+    
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+  
+  &-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    
+    &:hover {
+      background: var(--border-light);
+    }
+  }
+  
+  &-icon {
+    padding: var(--spacing-sm);
+    background: transparent;
+    color: var(--text-muted);
+    
+    &:hover {
+      color: var(--text-primary);
+      background: var(--bg-tertiary);
+    }
+  }
 }
 
-.preset-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
+.font-mono {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
 }
 </style>

@@ -63,6 +63,68 @@
         <h3>解析失败</h3>
         <p>{{ parseError }}</p>
         
+        <!-- 智能解析按钮 -->
+        <div class="smart-parse-section">
+          <div class="smart-parse-buttons">
+            <button 
+              class="btn btn-smart-parse"
+              :disabled="smartParsing"
+              @click="startSmartParse(false)"
+            >
+              <svg v-if="smartParsing && !smartParseFailed" viewBox="0 0 24 24" width="18" height="18" class="animate-spin">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="18" height="18">
+                <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2" fill="none"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="2"/>
+                <path d="M11 8v6M8 11h6" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              {{ smartParsing && !smartParseFailed ? smartParseStatus : '智能解析' }}
+            </button>
+            
+            <!-- 打开浏览器解析按钮 -->
+            <button 
+              class="btn btn-login-browser"
+              :disabled="smartParsing"
+              @click="startSmartParseWithBrowser"
+            >
+              <svg v-if="smartParsing && smartParseFailed" viewBox="0 0 24 24" width="18" height="18" class="animate-spin">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="18" height="18">
+                <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M3 9h18M9 21V9" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+              {{ smartParsing && smartParseFailed ? smartParseStatus : '打开浏览器解析' }}
+            </button>
+          </div>
+          
+          <!-- 等待时间设置 -->
+          <div class="wait-time-setting">
+            <label>操作等待时间：</label>
+            <select v-model.number="smartParseWaitTime" class="wait-time-select">
+              <option :value="0">0 秒</option>
+              <option :value="1">1 秒</option>
+              <option :value="3">3 秒</option>
+              <option :value="5">5 秒</option>
+              <option :value="15">15 秒</option>
+              <option :value="30">30 秒</option>
+              <option :value="45">45 秒</option>
+              <option :value="60">60 秒</option>
+              <option :value="90">90 秒</option>
+              <option :value="120">120 秒</option>
+            </select>
+          </div>
+          
+          <p class="smart-parse-hint">
+            {{ smartParseFailed 
+              ? '未能捕获视频，请点击"打开浏览器解析"，在弹出窗口中登录或播放视频' 
+              : '智能解析：自动捕获视频流 | 打开浏览器解析：可手动登录/操作后捕获' }}
+          </p>
+        </div>
+        
         <!-- YouTube Cookie 配置提示 -->
         <div v-if="isYouTubeError" class="youtube-hint">
           <div class="hint-header">
@@ -138,7 +200,39 @@
         </div>
         
         <div class="video-info">
-          <h3 class="video-title">{{ videoInfo.title || '未知标题' }}</h3>
+          <div class="video-title-row">
+            <h3 v-if="!editingTitle" class="video-title">{{ videoInfo.title || '未知标题' }}</h3>
+            <input 
+              v-else
+              v-model="editTitleValue"
+              type="text"
+              class="title-edit-input"
+              @keyup.enter="saveTitle"
+              @keyup.escape="cancelEditTitle"
+              ref="titleInputRef"
+            />
+            <div class="title-actions">
+              <button v-if="!editingTitle" class="btn btn-icon btn-sm" @click="startEditTitle" title="编辑标题">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" fill="none"/>
+                </svg>
+              </button>
+              <template v-else>
+                <button class="btn btn-icon btn-sm btn-success" @click="saveTitle" title="保存">
+                  <svg viewBox="0 0 24 24" width="16" height="16">
+                    <polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2" fill="none"/>
+                  </svg>
+                </button>
+                <button class="btn btn-icon btn-sm" @click="cancelEditTitle" title="取消">
+                  <svg viewBox="0 0 24 24" width="16" height="16">
+                    <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
+                    <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
+                  </svg>
+                </button>
+              </template>
+            </div>
+          </div>
           <div class="video-meta">
             <span v-if="videoInfo.uploader" class="meta-item">
               <svg viewBox="0 0 24 24" width="14" height="14">
@@ -168,6 +262,44 @@
           <p v-if="videoInfo.description" class="video-desc">
             {{ truncateText(videoInfo.description, 150) }}
           </p>
+          
+          <!-- 智能解析多视频来源选择 -->
+          <div v-if="videoInfo._allVideoUrls && videoInfo._allVideoUrls.length > 1" class="video-source-section">
+            <label class="source-label">
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+              选择视频来源 (共 {{ videoInfo._allVideoUrls.length }} 个)
+            </label>
+            <select class="source-select" v-model="selectedVideoUrl">
+              <option 
+                v-for="(videoUrl, index) in videoInfo._allVideoUrls" 
+                :key="index"
+                :value="videoUrl"
+              >
+                {{ getVideoSourceLabel(videoUrl, index) }}
+              </option>
+            </select>
+            <div class="source-preview">
+              <div class="preview-url-wrapper">
+                <input 
+                  type="text" 
+                  class="preview-url-input" 
+                  :value="selectedVideoUrl" 
+                  readonly 
+                  @click="$event.target.select()"
+                />
+              </div>
+              <button class="btn btn-copy" @click="copyVideoUrl" title="复制链接">
+                <svg viewBox="0 0 24 24" width="14" height="14">
+                  <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+                </svg>
+                复制
+              </button>
+            </div>
+          </div>
           
           <!-- 格式选择 -->
           <div class="format-section">
@@ -406,7 +538,7 @@
 </template>
 
 <script setup>
-import { ref, computed, h, onMounted, watch } from 'vue'
+import { ref, computed, h, onMounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
@@ -426,6 +558,18 @@ const selectedItems = ref(new Set())
 const thumbnailError = ref(false)
 const errorCopied = ref(false)
 
+// 智能解析状态
+const smartParsing = ref(false)
+const smartParseStatus = ref('')
+const selectedVideoUrl = ref('')  // 选中的视频 URL（智能解析有多个来源时）
+const smartParseFailed = ref(false)  // 智能解析是否失败（用于显示重新解析选项）
+const smartParseWaitTime = ref(5)  // 用户操作等待时间（秒）
+
+// 标题编辑
+const editingTitle = ref(false)
+const editTitleValue = ref('')
+const titleInputRef = ref(null)
+
 // 分辨率相关
 const selectedResolution = ref('best')  // 统一分辨率选择
 const playlistItemResolutions = ref({})  // 每个视频的独立分辨率选择
@@ -443,20 +587,40 @@ const resolutionOptions = computed(() => {
     // 从格式列表中提取唯一的分辨率
     const heights = new Set()
     playlistFormats.value.forEach(f => {
-      if (f.height && f.vcodec && f.vcodec !== 'none') {
-        heights.add(f.height)
+      // 只要有 height 就添加（yt-dlp 返回的格式可能各种情况）
+      if (f.height && f.height > 0) {
+        // 排除纯音频格式（vcodec 明确为 none）
+        if (f.vcodec !== 'none') {
+          heights.add(f.height)
+        }
       }
     })
     
     // 按分辨率从高到低排序
     const sortedHeights = Array.from(heights).sort((a, b) => b - a)
     
+    console.log('可用分辨率:', sortedHeights)
+    
     sortedHeights.forEach(height => {
       let label = `${height}p`
       if (height >= 2160) label = `4K (${height}p)`
       else if (height >= 1440) label = `2K (${height}p)`
+      else if (height >= 1080) label = `1080p (Full HD)`
+      else if (height >= 720) label = `720p (HD)`
       options.push({ value: String(height), label })
     })
+  }
+  
+  // 如果没有获取到格式，提供常用分辨率作为默认选项
+  if (options.length === 1) {
+    options.push(
+      { value: '2160', label: '4K (2160p)' },
+      { value: '1440', label: '2K (1440p)' },
+      { value: '1080', label: '1080p (Full HD)' },
+      { value: '720', label: '720p (HD)' },
+      { value: '480', label: '480p' },
+      { value: '360', label: '360p' }
+    )
   }
   
   return options
@@ -702,6 +866,15 @@ const parseUrl = async () => {
   appStore.config.enablePlaylist = enablePlaylist.value
   
   try {
+    // 检查是否需要使用智能解析（域名白名单匹配）
+    const shouldSmartParse = await appStore.api.shouldUseSmartParse(url.value.trim())
+    
+    if (shouldSmartParse) {
+      console.log('域名匹配智能解析白名单，直接使用智能解析')
+      await startSmartParse()
+      return
+    }
+    
     const result = await appStore.parseVideo(url.value.trim(), enablePlaylist.value)
     
     if (result.type === 'playlist') {
@@ -787,6 +960,82 @@ const copyError = async () => {
   }
 }
 
+// 智能解析 - 使用 Electron 内置浏览器拦截网络请求
+// showBrowser: 是否显示浏览器窗口让用户操作
+const startSmartParse = async (showBrowser = false) => {
+  if (!url.value.trim() || smartParsing.value) return
+  
+  smartParsing.value = true
+  parsing.value = true  // 同步 parsing 状态
+  smartParseStatus.value = showBrowser ? '正在打开浏览器...' : '正在启动浏览器...'
+  
+  // 如果不是显示浏览器模式，清除之前的失败状态
+  if (!showBrowser) {
+    smartParseFailed.value = false
+  }
+  
+  // 监听进度更新
+  appStore.api.onSmartParseProgress?.((data) => {
+    smartParseStatus.value = data.message || '处理中...'
+  })
+  
+  try {
+    const options = {
+      show: showBrowser,
+      timeout: showBrowser ? 120000 : 30000,  // 显示浏览器时给更多时间
+      userWaitTime: showBrowser ? smartParseWaitTime.value * 1000 : 0  // 用户操作等待时间
+    }
+    
+    const result = await appStore.api.smartParse(url.value.trim(), options)
+    
+    if (result.success && result.bestUrl) {
+      // 成功捕获到视频地址
+      parseError.value = ''
+      smartParseFailed.value = false
+      videoInfo.value = {
+        title: result.title || '未知标题',
+        thumbnail: result.thumbnail || '',
+        duration: null,
+        uploader: '',
+        formats: [],
+        // 保存捕获到的视频地址
+        _smartParseUrl: result.bestUrl,
+        _allVideoUrls: result.videoUrls
+      }
+      isPlaylist.value = false
+      
+      // 设置默认选中的视频 URL
+      selectedVideoUrl.value = result.bestUrl
+      
+      appStore.showToast(`成功捕获到 ${result.videoUrls.length} 个视频地址`, 'success')
+      
+      // 显示捕获到的地址供用户选择
+      if (result.videoUrls.length > 1) {
+        console.log('捕获到的所有视频地址:', result.videoUrls)
+      }
+    } else {
+      // 智能解析失败，可能需要登录或其他操作
+      smartParseFailed.value = true
+      parseError.value = '智能解析未能捕获到视频地址，请尝试打开浏览器登录后重新解析'
+      appStore.showToast('未能捕获到视频，请尝试"打开浏览器解析"', 'warning')
+    }
+  } catch (error) {
+    console.error('智能解析失败:', error)
+    smartParseFailed.value = true
+    parseError.value = '智能解析失败: ' + error.message
+    appStore.showToast('智能解析失败: ' + error.message, 'error')
+  } finally {
+    smartParsing.value = false
+    parsing.value = false
+    smartParseStatus.value = ''
+  }
+}
+
+// 打开浏览器进行智能解析（用户可以在浏览器中操作）
+const startSmartParseWithBrowser = () => {
+  startSmartParse(true)
+}
+
 const selectAll = () => {
   if (isPlaylist.value && videoInfo.value) {
     videoInfo.value.forEach((_, index) => selectedItems.value.add(index))
@@ -817,21 +1066,74 @@ const fetchPlaylistFormats = async (playlist) => {
   if (!playlist || playlist.length === 0) return
   
   // 找到第一个有 URL 的视频
-  const firstItem = playlist.find(item => item.url || item.webpage_url)
-  if (!firstItem) return
+  const firstItem = playlist.find(item => item.url || item.webpage_url || item.id)
+  if (!firstItem) {
+    console.log('播放列表中没有可用的视频 URL')
+    return
+  }
   
-  const itemUrl = firstItem.url || firstItem.webpage_url
+  console.log('第一个视频信息:', JSON.stringify(firstItem, null, 2))
+  
+  // 获取视频 URL，并移除播放列表参数以确保只解析单个视频
+  let itemUrl = firstItem.url || firstItem.webpage_url
+  
+  // 如果没有完整 URL，尝试根据 id 构建（YouTube）
+  if (!itemUrl && firstItem.id) {
+    itemUrl = `https://www.youtube.com/watch?v=${firstItem.id}`
+  }
+  
+  if (!itemUrl) {
+    console.log('无法构建视频 URL')
+    return
+  }
+  
+  // 移除 URL 中的播放列表参数，确保只解析单个视频
+  try {
+    const urlObj = new URL(itemUrl)
+    urlObj.searchParams.delete('list')
+    urlObj.searchParams.delete('index')
+    itemUrl = urlObj.toString()
+  } catch (e) {
+    // URL 解析失败，保持原样
+    console.log('URL 解析失败，使用原始 URL')
+  }
+  
+  console.log('获取格式信息 URL:', itemUrl)
   
   loadingFormats.value = true
   try {
-    const result = await appStore.parseVideo(itemUrl)
-    if (result.type === 'single' && result.data.formats) {
-      playlistFormats.value = result.data.formats
-      appStore.showToast('已获取可用分辨率', 'success')
+    // 明确禁用播放列表模式，只获取单个视频的完整格式信息
+    const result = await appStore.parseVideo(itemUrl, false)
+    console.log('解析结果类型:', result.type)
+    
+    if (result.type === 'single' && result.data) {
+      if (result.data.formats && result.data.formats.length > 0) {
+        playlistFormats.value = result.data.formats
+        console.log('获取到格式数量:', result.data.formats.length)
+        
+        // 打印所有视频格式的分辨率
+        const videoFormats = result.data.formats.filter(f => f.height && f.vcodec !== 'none')
+        const heights = [...new Set(videoFormats.map(f => f.height))].sort((a, b) => b - a)
+        console.log('视频格式分辨率:', heights.map(h => `${h}p`).join(', '))
+        
+        // 检查是否只有低分辨率
+        const maxHeight = Math.max(...heights, 0)
+        if (maxHeight <= 480 && (!appStore.config.cookiesFromBrowser || appStore.config.cookiesFromBrowser === 'none')) {
+          appStore.showToast('提示：在设置中配置浏览器 Cookie 可获取高清格式', 'warning', 5000)
+        } else if (videoFormats.length > 0) {
+          appStore.showToast(`已获取 ${heights.length} 种分辨率 (最高 ${maxHeight}p)`, 'success')
+        }
+      } else {
+        console.log('解析结果中没有 formats 字段:', Object.keys(result.data))
+        // 如果没有 formats，可能是因为没有 cookies，提示用户
+        if (!appStore.config.cookiesFromBrowser || appStore.config.cookiesFromBrowser === 'none') {
+          appStore.showToast('提示：在"设置"中配置浏览器 Cookie 可获取更多格式', 'info', 5000)
+        }
+      }
     }
   } catch (error) {
     console.error('获取格式信息失败:', error)
-    // 失败时不显示错误，用户仍可使用"最佳质量"选项
+    appStore.showToast('获取格式信息失败，将使用默认分辨率', 'warning')
   } finally {
     loadingFormats.value = false
   }
@@ -839,6 +1141,30 @@ const fetchPlaylistFormats = async (playlist) => {
 
 const selectNone = () => {
   selectedItems.value.clear()
+}
+
+// 标题编辑方法
+const startEditTitle = () => {
+  editTitleValue.value = videoInfo.value?.title || ''
+  editingTitle.value = true
+  // 下一帧聚焦输入框
+  nextTick(() => {
+    titleInputRef.value?.focus()
+    titleInputRef.value?.select()
+  })
+}
+
+const saveTitle = () => {
+  if (editTitleValue.value.trim() && videoInfo.value) {
+    videoInfo.value.title = editTitleValue.value.trim()
+    appStore.showToast('标题已修改', 'success')
+  }
+  editingTitle.value = false
+}
+
+const cancelEditTitle = () => {
+  editingTitle.value = false
+  editTitleValue.value = ''
 }
 
 const toggleSelect = (index) => {
@@ -852,6 +1178,9 @@ const toggleSelect = (index) => {
 const addToDownload = () => {
   if (!videoInfo.value) return
   
+  // 检查是否是智能解析的结果
+  const isSmartParseResult = !!videoInfo.value._smartParseUrl
+  
   // 获取选中格式的信息
   const formatInfo = selectedFormatInfo.value || bestVideoInfo.value
   
@@ -860,7 +1189,11 @@ const addToDownload = () => {
   let formatId = null
   let resolutionLabel = ''
   
-  if (formatType.value === 'audio') {
+  // 智能解析结果直接使用 best 格式
+  if (isSmartParseResult) {
+    format = 'best'
+    resolutionLabel = '自动'
+  } else if (formatType.value === 'audio') {
     // 仅音频
     format = 'bestaudio'
     resolutionLabel = '音频'
@@ -896,8 +1229,14 @@ const addToDownload = () => {
     }
   }
   
+  // 使用智能解析捕获的 URL 或原始 URL
+  // 如果是智能解析结果，使用用户选中的视频 URL（如果有多个来源的话）
+  const downloadUrl = isSmartParseResult 
+    ? (selectedVideoUrl.value || videoInfo.value._smartParseUrl) 
+    : url.value
+  
   appStore.addToQueue({
-    url: url.value,
+    url: downloadUrl,
     title: videoInfo.value.title,
     thumbnail: videoInfo.value.thumbnail,
     duration: videoInfo.value.duration,
@@ -999,6 +1338,52 @@ const truncateText = (text, maxLength) => {
   if (!text) return ''
   if (text.length <= maxLength) return text
   return text.substring(0, maxLength) + '...'
+}
+
+// 截断 URL 显示
+const truncateUrl = (url, maxLength) => {
+  if (!url) return ''
+  if (url.length <= maxLength) return url
+  return url.substring(0, maxLength) + '...'
+}
+
+// 获取视频来源标签
+const getVideoSourceLabel = (videoUrl, index) => {
+  try {
+    const urlObj = new URL(videoUrl)
+    const pathname = urlObj.pathname
+    
+    // 识别视频格式
+    let format = ''
+    if (pathname.includes('.m3u8')) format = 'HLS (m3u8)'
+    else if (pathname.includes('.mpd')) format = 'DASH (mpd)'
+    else if (pathname.includes('.mp4')) format = 'MP4'
+    else if (pathname.includes('.flv')) format = 'FLV'
+    else if (pathname.includes('.m4s')) format = 'M4S'
+    else if (pathname.includes('.ts')) format = 'TS'
+    else format = '视频'
+    
+    // 尝试从 URL 中提取质量信息
+    let quality = ''
+    const qualityMatch = videoUrl.match(/(\d{3,4}p)|(\d{3,4}x\d{3,4})/i)
+    if (qualityMatch) {
+      quality = ` - ${qualityMatch[0]}`
+    }
+    
+    return `来源 ${index + 1}: ${format}${quality}`
+  } catch (e) {
+    return `来源 ${index + 1}`
+  }
+}
+
+// 复制视频 URL
+const copyVideoUrl = async () => {
+  try {
+    await navigator.clipboard.writeText(selectedVideoUrl.value)
+    appStore.showToast('视频链接已复制', 'success')
+  } catch (e) {
+    appStore.showToast('复制失败', 'error')
+  }
 }
 
 // 生成解析命令
@@ -1305,6 +1690,119 @@ const copyDownloadCommand = async () => {
   flex-wrap: wrap;
 }
 
+.smart-parse-section {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.smart-parse-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.btn-smart-parse {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+  }
+  
+  &:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+  
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.btn-login-browser {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+  }
+  
+  &:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+  
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.wait-time-setting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+  
+  label {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+}
+
+.wait-time-select {
+  padding: 4px 24px 4px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238888a0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  
+  &:focus {
+    border-color: var(--primary);
+  }
+}
+
+.smart-parse-hint {
+  margin-top: var(--spacing-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .youtube-hint {
   margin-bottom: var(--spacing-md);
   padding: var(--spacing-md);
@@ -1441,11 +1939,57 @@ const copyDownloadCommand = async () => {
   gap: var(--spacing-sm);
 }
 
+.video-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
 .video-title {
   font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.4;
+  flex: 1;
+}
+
+.title-edit-input {
+  flex: 1;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  outline: none;
+  
+  &:focus {
+    box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
+  }
+}
+
+.title-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.btn-sm {
+  padding: 4px;
+  
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.btn-success {
+  color: var(--success);
+  
+  &:hover {
+    background: rgba(var(--success-rgb, 34, 197, 94), 0.1);
+  }
 }
 
 .video-meta {
@@ -1471,6 +2015,115 @@ const copyDownloadCommand = async () => {
   color: var(--text-secondary);
   line-height: 1.6;
   margin-top: var(--spacing-xs);
+}
+
+// 视频来源选择（智能解析多来源）
+.video-source-section {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: var(--radius-md);
+}
+
+.source-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--primary);
+  margin-bottom: var(--spacing-sm);
+  
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.source-select {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238888a0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  
+  &:focus {
+    border-color: var(--primary);
+  }
+  
+  option {
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    padding: 8px;
+  }
+}
+
+.source-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.preview-url-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-url-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: text;
+  
+  &:focus {
+    border-color: var(--primary);
+  }
+  
+  &::selection {
+    background: var(--primary);
+    color: white;
+  }
+}
+
+.btn-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-light);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+  }
+  
+  svg {
+    flex-shrink: 0;
+  }
 }
 
 .format-section {

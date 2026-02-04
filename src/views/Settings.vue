@@ -305,6 +305,73 @@
         </div>
       </section>
       
+      <!-- 智能解析设置 -->
+      <section class="settings-section">
+        <h2 class="section-title">
+          <svg viewBox="0 0 24 24" width="20" height="20">
+            <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2" fill="none"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="2"/>
+            <path d="M11 8v6M8 11h6" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          智能解析
+        </h2>
+        
+        <div class="setting-item column">
+          <div class="setting-info">
+            <label>智能解析域名白名单</label>
+            <p>添加的域名将跳过 yt-dlp 解析，直接使用智能解析捕获视频流</p>
+          </div>
+          
+          <div class="domain-input-row">
+            <input 
+              type="text" 
+              class="input font-mono" 
+              v-model="newSmartDomain"
+              placeholder="输入域名，如 example.com"
+              @keyup.enter="addSmartDomain"
+            />
+            <button class="btn btn-primary" @click="addSmartDomain" :disabled="!newSmartDomain.trim()">
+              添加
+            </button>
+          </div>
+          
+          <div class="domain-list" v-if="config.smartParseDomains && config.smartParseDomains.length > 0">
+            <div 
+              v-for="(domain, index) in config.smartParseDomains" 
+              :key="index"
+              class="domain-item"
+            >
+              <span class="domain-text">{{ domain }}</span>
+              <button class="btn btn-icon btn-sm" @click="removeSmartDomain(index)" title="删除">
+                <svg viewBox="0 0 24 24" width="14" height="14">
+                  <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
+                  <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          
+          <div class="smart-parse-help">
+            <div class="help-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" stroke-width="2" fill="none"/>
+                <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="help-content">
+              <p><strong>使用说明：</strong></p>
+              <ul>
+                <li>添加的域名会自动匹配子域名（如添加 site.com 会匹配 www.site.com）</li>
+                <li>适用于 yt-dlp 不支持的网站</li>
+                <li>智能解析会捕获页面中的视频流地址（m3u8、mp4 等）</li>
+                <li>如果捕获到多个视频来源，可以选择想要下载的链接</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+      
       <!-- 网络设置 -->
       <section class="settings-section">
         <h2 class="section-title">
@@ -551,8 +618,36 @@ const config = reactive({
   writeDescription: false,
   audioFormat: 'mp3',
   audioQuality: '0',
-  customArgs: ''
+  customArgs: '',
+  // 智能解析域名白名单
+  smartParseDomains: []
 })
+
+// 智能解析域名输入
+const newSmartDomain = ref('')
+
+// 添加智能解析域名
+const addSmartDomain = () => {
+  const domain = newSmartDomain.value.trim().toLowerCase()
+  if (!domain) return
+  
+  // 移除协议前缀
+  let cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  
+  // 检查是否已存在
+  if (config.smartParseDomains.includes(cleanDomain)) {
+    appStore.showToast('该域名已存在', 'warning')
+    return
+  }
+  
+  config.smartParseDomains.push(cleanDomain)
+  newSmartDomain.value = ''
+}
+
+// 删除智能解析域名
+const removeSmartDomain = (index) => {
+  config.smartParseDomains.splice(index, 1)
+}
 
 const templateTags = [
   { name: '{title}', desc: '视频标题' },
@@ -574,6 +669,10 @@ const previewFilename = computed(() => {
 
 onMounted(() => {
   Object.assign(config, appStore.config)
+  // 确保 smartParseDomains 是数组
+  if (!Array.isArray(config.smartParseDomains)) {
+    config.smartParseDomains = []
+  }
 })
 
 const selectDownloadPath = async () => {
@@ -607,7 +706,9 @@ const addCustomArg = (arg) => {
 }
 
 const saveConfig = () => {
-  appStore.saveConfig({ ...config })
+  // 使用 JSON 深拷贝，确保 reactive 对象可以通过 IPC 序列化
+  const plainConfig = JSON.parse(JSON.stringify(config))
+  appStore.saveConfig(plainConfig)
 }
 
 const resetConfig = () => {
@@ -861,6 +962,84 @@ const checkForUpdates = () => {
 .preview-text {
   color: var(--success);
   font-family: var(--font-mono);
+}
+
+// 智能解析域名设置
+.domain-input-row {
+  display: flex;
+  gap: var(--spacing-sm);
+  width: 100%;
+  
+  .input {
+    flex: 1;
+  }
+}
+
+.domain-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  width: 100%;
+  margin-top: var(--spacing-sm);
+}
+
+.domain-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 6px 10px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  
+  .domain-text {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--primary);
+  }
+  
+  .btn-icon {
+    padding: 2px;
+    color: var(--text-muted);
+    
+    &:hover {
+      color: var(--error);
+    }
+  }
+}
+
+.smart-parse-help {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-md);
+  background: var(--bg-dark);
+  border-radius: var(--radius-md);
+  width: 100%;
+  
+  .help-icon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  
+  .help-content {
+    p {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: var(--spacing-xs);
+    }
+    
+    ul {
+      margin: 0;
+      padding-left: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+      
+      li {
+        margin-bottom: 2px;
+      }
+    }
+  }
 }
 
 // Cookie 帮助

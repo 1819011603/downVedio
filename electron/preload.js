@@ -11,6 +11,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkYtdlp: () => ipcRenderer.invoke('ytdlp:check'),
   parseVideo: (url, enablePlaylist = true) => ipcRenderer.invoke('video:parse', url, enablePlaylist),
   getFormats: (url) => ipcRenderer.invoke('video:formats', url),
+  
+  // 智能解析（Playwright 网络拦截）
+  smartParse: (url, options) => ipcRenderer.invoke('video:smartParse', url, options),
+  onSmartParseProgress: (callback) => {
+    ipcRenderer.on('smart-parse:progress', (_, data) => callback(data))
+  },
+  // 检查 URL 是否应该使用智能解析（匹配域名白名单）
+  shouldUseSmartParse: (url) => ipcRenderer.invoke('video:shouldUseSmartParse', url),
 
   // 下载相关
   startDownload: (task) => ipcRenderer.invoke('download:start', task),

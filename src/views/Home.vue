@@ -1245,7 +1245,8 @@ const addToDownload = () => {
     formatId: formatId,
     formatType: formatType.value,  // 保存格式类型
     resolution: resolutionLabel,
-    filesize: formatInfo ? getFileSize(formatInfo) : 0
+    filesize: formatInfo ? getFileSize(formatInfo) : 0,
+    isSmartParse: isSmartParseResult  // 标记是否来自智能解析
   })
   
   appStore.showToast('已添加到下载队列', 'success')
@@ -1937,12 +1938,15 @@ const copyDownloadCommand = async () => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
+  min-width: 0;  // 防止内容溢出 grid
+  overflow: hidden;
 }
 
 .video-title-row {
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
+  width: 100%;
 }
 
 .video-title {
@@ -1951,10 +1955,22 @@ const copyDownloadCommand = async () => {
   color: var(--text-primary);
   line-height: 1.4;
   flex: 1;
+  min-width: 0;  // 允许文字截断
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;  // 最多显示2行
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
+
+.title-actions {
+  flex-shrink: 0;  // 确保按钮不被压缩
 }
 
 .title-edit-input {
   flex: 1;
+  min-width: 0;
   font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);

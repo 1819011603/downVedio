@@ -1298,10 +1298,19 @@ function downloadM3u8(task, onProgress) {
     filename = filename.replace(/[<>:"/\\|?*]/g, '_').trim()
     if (!filename) filename = 'video_' + Date.now()
     
+    // 确保下载目录存在
+    const downloadDir = config.downloadPath
+    if (!fs.existsSync(downloadDir)) {
+      fs.mkdirSync(downloadDir, { recursive: true })
+    }
+    
+    console.log('下载目录:', downloadDir)
+    console.log('文件名:', filename)
+    
     // N_m3u8DL-RE 参数
     const args = [
       task.url,
-      '--save-dir', config.downloadPath,
+      '--save-dir', downloadDir,
       '--save-name', filename,
       '--auto-select',           // 自动选择最佳流
       '--check-segments-count',  // 检查分片数量
@@ -1322,24 +1331,46 @@ function downloadM3u8(task, onProgress) {
     console.log('N_m3u8DL-RE 命令:', n_m3u8dlPath)
     console.log('N_m3u8DL-RE args:', args.join(' '))
     
-    const downloadProcess = spawn(n_m3u8dlPath, args)
+    // 使用 spawn，设置工作目录为下载目录
+    const downloadProcess = spawn(n_m3u8dlPath, args, {
+      cwd: downloadDir  // 设置工作目录
+    })
     let lastProgress = 0
     let errorOutput = ''
     
     // 解析 N_m3u8DL-RE 的进度输出
+    // 格式: Vid Kbps ━━━━━━━━━━ 635/976 65.06% 1.39GB/2.13GB 2.73MBps 00:08:48
     const parseM3u8Progress = (output) => {
       const info = { progress: null, speed: '', eta: '', size: '' }
       
-      // 解析进度 例如: Vid 100.00% | Aud 100.00%  或  23.45%
+      // 解析进度百分比 例如: 65.06%
       const progressMatch = output.match(/(\d+\.?\d*)%/)
       if (progressMatch) {
         info.progress = parseFloat(progressMatch[1])
       }
       
-      // 解析速度
-      const speedMatch = output.match(/([\d.]+\s*[KMGT]?B\/s)/i)
+      // 解析已下载/总大小 例如: 1.39GB/2.13GB
+      const sizeMatch = output.match(/([\d.]+\s*[KMGT]?i?B)\/([\d.]+\s*[KMGT]?i?B)/i)
+      if (sizeMatch) {
+        info.size = `${sizeMatch[1]} / ${sizeMatch[2]}`
+      }
+      
+      // 解析速度 例如: 2.73MBps 或 2.73MB/s
+      const speedMatch = output.match(/([\d.]+\s*[KMGT]?i?B)(?:ps|\/s)/i)
       if (speedMatch) {
-        info.speed = speedMatch[1]
+        info.speed = speedMatch[1] + '/s'
+      }
+      
+      // 解析 ETA 例如: 00:08:48
+      const etaMatch = output.match(/(\d{2}:\d{2}:\d{2})\s*$/)
+      if (etaMatch) {
+        info.eta = etaMatch[1]
+      }
+      
+      // 解析分片进度 例如: 635/976
+      const segmentMatch = output.match(/(\d+)\/(\d+)\s+[\d.]+%/)
+      if (segmentMatch) {
+        info.segments = `${segmentMatch[1]}/${segmentMatch[2]}`
       }
       
       return info
@@ -1350,17 +1381,21 @@ function downloadM3u8(task, onProgress) {
       console.log('m3u8dl output:', output)
       
       const info = parseM3u8Progress(output)
-      if (info.progress !== null && info.progress !== lastProgress) {
-        lastProgress = info.progress
-        onProgress({
-          taskId: task.id,
-          progress: info.progress,
-          speed: info.speed,
-          eta: info.eta,
-          size: info.size,
-          status: 'downloading',
-          output: output.trim()
-        })
+      if (info.progress !== null) {
+        // 只有进度变化超过 0.1% 才更新，避免频繁更新
+        if (Math.abs(info.progress - lastProgress) >= 0.1 || info.progress >= 100) {
+          lastProgress = info.progress
+          onProgress({
+            taskId: task.id,
+            progress: info.progress,
+            speed: info.speed,
+            eta: info.eta,
+            size: info.size,
+            segments: info.segments,  // 分片进度
+            status: 'downloading',
+            output: output.trim()
+          })
+        }
       }
     }
     

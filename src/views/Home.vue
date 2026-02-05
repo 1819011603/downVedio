@@ -1017,7 +1017,10 @@ const startSmartParse = async (showBrowser = false) => {
         formats: [],
         // 保存捕获到的视频地址
         _smartParseUrl: result.bestUrl,
-        _allVideoUrls: result.videoUrls
+        _allVideoUrls: result.videoUrls,
+        // 保存带请求头的视频信息
+        _videoUrlsWithHeaders: result.videoUrlsWithHeaders || [],
+        _bestUrlHeaders: result.bestUrlHeaders || {}
       }
       isPlaylist.value = false
       
@@ -1029,6 +1032,11 @@ const startSmartParse = async (showBrowser = false) => {
       // 显示捕获到的地址供用户选择
       if (result.videoUrls.length > 1) {
         console.log('捕获到的所有视频地址:', result.videoUrls)
+      }
+      
+      // 打印请求头信息（调试用）
+      if (result.bestUrlHeaders && Object.keys(result.bestUrlHeaders).length > 0) {
+        console.log('最佳URL的请求头:', result.bestUrlHeaders)
       }
     } else {
       // 智能解析失败，可能需要登录或其他操作
@@ -1252,6 +1260,19 @@ const addToDownload = () => {
     ? (selectedVideoUrl.value || videoInfo.value._smartParseUrl) 
     : url.value
   
+  // 获取选中URL的请求头（智能解析时）
+  let downloadHeaders = {}
+  if (isSmartParseResult && videoInfo.value._videoUrlsWithHeaders) {
+    const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
+      item => item.url === downloadUrl
+    )
+    if (urlWithHeaders) {
+      downloadHeaders = urlWithHeaders.headers
+    } else if (videoInfo.value._bestUrlHeaders) {
+      downloadHeaders = videoInfo.value._bestUrlHeaders
+    }
+  }
+  
   appStore.addToQueue({
     url: downloadUrl,
     title: videoInfo.value.title,
@@ -1263,7 +1284,8 @@ const addToDownload = () => {
     formatType: formatType.value,  // 保存格式类型
     resolution: resolutionLabel,
     filesize: formatInfo ? getFileSize(formatInfo) : 0,
-    isSmartParse: isSmartParseResult  // 标记是否来自智能解析
+    isSmartParse: isSmartParseResult,  // 标记是否来自智能解析
+    headers: downloadHeaders  // 保存请求头（用于下载时使用）
   })
   
   appStore.showToast('已添加到下载队列', 'success')

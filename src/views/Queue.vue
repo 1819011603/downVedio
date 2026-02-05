@@ -304,6 +304,23 @@
               </svg>
             </button>
             
+            <!-- 手动合并按钮：失败的 m3u8 任务可以尝试用 ffmpeg 合并 -->
+            <button 
+              v-if="task.status === 'error' && isM3u8Task(task)" 
+              class="btn btn-icon btn-warning" 
+              @click="manualMerge(task)" 
+              :disabled="task.merging"
+              :title="task.merging ? '正在合并...' : '使用 FFmpeg 合并已下载的分片'"
+            >
+              <svg v-if="!task.merging" viewBox="0 0 24 24" width="18" height="18">
+                <path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="18" height="18" class="animate-spin">
+                <path d="M21 12a9 9 0 1 1-9-9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+              </svg>
+            </button>
+            
             <!-- 复制链接 -->
             <button v-if="task.status !== 'downloading'" class="btn btn-icon" @click="copyLink(task.url)" title="复制链接">
               <svg viewBox="0 0 24 24" width="18" height="18">
@@ -484,6 +501,47 @@ const retryTask = (task) => {
     path: '/',
     query: { url: task.url }
   })
+}
+
+// 判断是否是 m3u8 任务
+const isM3u8Task = (task) => {
+  if (!task.url) return false
+  const url = task.url.toLowerCase()
+  return url.includes('.m3u8') || url.includes('m3u8')
+}
+
+// 手动合并 m3u8 分片（使用 ffmpeg）
+const manualMerge = async (task) => {
+  try {
+    // 标记正在合并
+    task.merging = true
+    appStore.showToast('正在使用 FFmpeg 合并分片...', 'info')
+    
+    // 调用合并 API
+    const result = await appStore.api.mergeM3u8(task.title, task.title)
+    
+    if (result.success) {
+      appStore.showToast(result.message || '合并成功！', 'success')
+      // 更新任务状态为已完成
+      task.status = 'completed'
+      task.progress = 100
+      task.merging = false
+      
+      // 尝试打开合并后的视频
+      if (result.outputPath) {
+        setTimeout(() => {
+          appStore.api.openFile(result.outputPath)
+        }, 500)
+      }
+    } else {
+      appStore.showToast('合并失败: ' + (result.error || '未知错误'), 'error')
+      task.merging = false
+    }
+  } catch (e) {
+    console.error('手动合并失败:', e)
+    appStore.showToast('合并失败: ' + e.message, 'error')
+    task.merging = false
+  }
 }
 
 // 打开已下载的视频（使用默认应用）

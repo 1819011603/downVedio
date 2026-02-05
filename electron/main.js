@@ -306,6 +306,7 @@ async function smartParse(url, options = {}) {
   const userWaitTime = options.userWaitTime || 0  // 用户操作等待时间（毫秒）
   const showBrowser = options.show || false  // 是否显示浏览器窗口
   const capturedUrls = []
+  const capturedHeaders = {}  // 保存每个URL的请求头
   let pageTitle = ''
   let pageThumbnail = ''
   
@@ -529,13 +530,21 @@ async function smartParse(url, options = {}) {
         console.log('最佳视频 URL:', sortedUrls[0].substring(0, 100))
       }
 
+      // 构建带请求头的视频信息
+      const videoUrlsWithHeaders = sortedUrls.map(videoUrl => ({
+        url: videoUrl,
+        headers: capturedHeaders[videoUrl] || {}
+      }))
+      
       cleanup()
       resolve({
         success: sortedUrls.length > 0,
         title: pageTitle || '未知标题',
         thumbnail: pageThumbnail,
         videoUrls: sortedUrls,
-        bestUrl: sortedUrls[0] || null
+        videoUrlsWithHeaders: videoUrlsWithHeaders,  // 带请求头的视频列表
+        bestUrl: sortedUrls[0] || null,
+        bestUrlHeaders: capturedHeaders[sortedUrls[0]] || {}  // 最佳URL的请求头
       })
     }
 
@@ -569,6 +578,46 @@ async function smartParse(url, options = {}) {
       }
       
       callback({ cancel: false })
+    })
+    
+    // 监听请求头（捕获每个视频请求的完整请求头）
+    session.webRequest.onBeforeSendHeaders((details, callback) => {
+      const reqUrl = details.url
+      
+      // 只处理已捕获的视频 URL
+      if (capturedUrls.includes(reqUrl) && !capturedHeaders[reqUrl]) {
+        // 保存重要的请求头
+        const headers = {}
+        const importantHeaders = [
+          'referer', 'Referer',
+          'origin', 'Origin', 
+          'cookie', 'Cookie',
+          'user-agent', 'User-Agent',
+          'accept', 'Accept',
+          'accept-language', 'Accept-Language',
+          'authorization', 'Authorization',
+          'x-requested-with', 'X-Requested-With'
+        ]
+        
+        if (details.requestHeaders) {
+          for (const [key, value] of Object.entries(details.requestHeaders)) {
+            // 保存所有重要的请求头
+            if (importantHeaders.some(h => h.toLowerCase() === key.toLowerCase())) {
+              headers[key] = value
+            }
+          }
+        }
+        
+        // 如果没有 Referer，使用页面 URL
+        if (!headers['Referer'] && !headers['referer']) {
+          headers['Referer'] = url
+        }
+        
+        capturedHeaders[reqUrl] = headers
+        console.log('📋 捕获请求头:', reqUrl.substring(0, 80), '- Headers:', Object.keys(headers).join(', '))
+      }
+      
+      callback({ cancel: false, requestHeaders: details.requestHeaders })
     })
 
     // 监听响应头（检查 Content-Type）- 也要遵循格式过滤
@@ -1005,12 +1054,21 @@ async function smartParse(url, options = {}) {
         
         if (sortedUrls.length > 0) {
           console.log('窗口关闭但已捕获到视频，返回结果')
+          
+          // 构建带请求头的视频信息
+          const videoUrlsWithHeaders = sortedUrls.map(videoUrl => ({
+            url: videoUrl,
+            headers: capturedHeaders[videoUrl] || {}
+          }))
+          
           resolve({
             success: true,
             title: pageTitle || '未知标题',
             thumbnail: pageThumbnail,
             videoUrls: sortedUrls,
+            videoUrlsWithHeaders: videoUrlsWithHeaders,
             bestUrl: sortedUrls[0],
+            bestUrlHeaders: capturedHeaders[sortedUrls[0]] || {},
             warning: '解析窗口被提前关闭，但已捕获到视频地址'
           })
         } else {
@@ -1472,19 +1530,34 @@ function downloadM3u8(task, onProgress) {
       '--save-dir', downloadDir,
       '--save-name', filename,
       '--auto-select',           // 自动选择最佳流
-      '--check-segments-count',  // 检查分片数量
-      '--del-after-done',        // 完成后删除临时文件
       '--no-log',                // 不生成日志文件
+      '--tmp-dir', path.join(downloadDir, '.download_cache'),  // 指定临时目录
+      '--del-after-done',        // 完成后删除临时文件（合并后才删除）
+      '--check-segments-count:false',  // 禁用分片数量检查（避免因计数问题导致合并失败）
+      '--download-retry-count', '10',  // 每个分片失败时重试10次（默认3次太少）
+      '--http-request-timeout', '30',  // HTTP超时30秒（默认100秒太长）
     ]
     
-    // 添加线程数
-    if (config.downloadThreads && config.downloadThreads > 1) {
+    // 添加线程数（按照配置来）
+    if (config.downloadThreads && config.downloadThreads > 0) {
       args.push('--thread-count', String(config.downloadThreads))
     }
     
     // 添加代理
     if (config.proxy) {
       args.push('--custom-proxy', config.proxy)
+    }
+    
+    // 添加请求头（智能解析时捕获的请求头）
+    if (task.headers && Object.keys(task.headers).length > 0) {
+      console.log('使用捕获的请求头:', task.headers)
+      
+      // N_m3u8DL-RE 使用 -H 参数添加请求头
+      for (const [key, value] of Object.entries(task.headers)) {
+        if (value) {
+          args.push('-H', `${key}: ${value}`)
+        }
+      }
     }
     
     console.log('N_m3u8DL-RE 命令:', n_m3u8dlPath)
@@ -1539,6 +1612,20 @@ function downloadM3u8(task, onProgress) {
       const output = data.toString()
       console.log('m3u8dl output:', output)
       
+      // 检查是否在合并阶段
+      if (output.includes('Merging') || output.includes('合并') || output.includes('Muxing')) {
+        onProgress({
+          taskId: task.id,
+          progress: 99.5,
+          speed: '',
+          eta: '',
+          size: '',
+          status: 'merging',
+          output: '正在合并视频片段...'
+        })
+        return
+      }
+      
       const info = parseM3u8Progress(output)
       if (info.progress !== null) {
         // 只有进度变化超过 0.1% 才更新，避免频繁更新
@@ -1566,9 +1653,175 @@ function downloadM3u8(task, onProgress) {
       handleOutput(data)
     })
     
-    downloadProcess.on('close', (code) => {
+    downloadProcess.on('close', async (code) => {
       console.log('N_m3u8DL-RE process closed with code:', code)
-      if (code === 0) {
+      
+      // 检查是否有分片校验失败的错误
+      const hasSegmentCheckError = errorOutput.includes('分片数量校验不通过') || 
+                                   errorOutput.includes('Segments check failed')
+      
+      // 检查输出文件是否存在（即使有错误，如果文件已生成就算成功）
+      const possibleExtensions = ['mp4', 'mkv', 'ts', 'flv', 'webm']
+      let outputFileExists = false
+      let outputFilePath = null
+      
+      for (const ext of possibleExtensions) {
+        const testPath = path.join(downloadDir, `${filename}.${ext}`)
+        if (fs.existsSync(testPath)) {
+          outputFileExists = true
+          outputFilePath = testPath
+          console.log('找到输出文件:', testPath)
+          break
+        }
+      }
+      
+      // 如果有分片校验错误但返回码为0且没有输出文件，说明合并失败，尝试用 ffmpeg 合并
+      if (hasSegmentCheckError && code === 0 && !outputFileExists) {
+        console.log('检测到分片校验失败且未生成视频文件，尝试使用 ffmpeg 合并...')
+        
+        // 通知用户正在合并
+        onProgress({
+          taskId: task.id,
+          progress: 99,
+          speed: '',
+          eta: '',
+          size: '',
+          status: 'merging',
+          output: '分片下载完成，正在使用 FFmpeg 合并...'
+        })
+        
+        // 查找临时文件夹
+        const tmpDir = path.join(downloadDir, '.download_cache')
+        if (fs.existsSync(tmpDir)) {
+          try {
+            const folders = fs.readdirSync(tmpDir)
+            let targetFolder = null
+            let segmentsFolder = null
+            
+            // 查找匹配的临时文件夹
+            for (const folder of folders) {
+              if (folder.includes(filename) || folder.includes(task.title?.replace(/[<>:"/\\|?*]/g, '_'))) {
+                targetFolder = path.join(tmpDir, folder)
+                // 查找分片文件夹
+                const subItems = fs.readdirSync(targetFolder)
+                for (const sub of subItems) {
+                  const subPath = path.join(targetFolder, sub)
+                  if (fs.statSync(subPath).isDirectory() && sub.match(/^\d/)) {
+                    segmentsFolder = subPath
+                    break
+                  }
+                }
+                if (segmentsFolder) break
+              }
+            }
+            
+            if (targetFolder && segmentsFolder && fs.existsSync(segmentsFolder)) {
+              console.log('找到临时文件夹:', targetFolder)
+              console.log('分片文件夹:', segmentsFolder)
+              
+              // 获取所有 .ts 或 .m4s 文件并排序
+              const allFiles = fs.readdirSync(segmentsFolder)
+              const tsFiles = allFiles.filter(f => f.endsWith('.ts') || f.endsWith('.m4s'))
+                .sort((a, b) => {
+                  const numA = parseInt(a.replace(/\.(ts|m4s)$/, ''))
+                  const numB = parseInt(b.replace(/\.(ts|m4s)$/, ''))
+                  return numA - numB
+                })
+              
+              if (tsFiles.length > 0) {
+                console.log(`找到 ${tsFiles.length} 个分片文件，开始用 ffmpeg 合并`)
+                
+                // 创建 concat 列表
+                const concatListPath = path.join(segmentsFolder, 'concat_list.txt')
+                const concatContent = tsFiles.map(f => `file '${f}'`).join('\n')
+                fs.writeFileSync(concatListPath, concatContent, 'ascii')
+                
+                // 输出文件路径
+                const tempOutputName = `merged_${Date.now()}.mp4`
+                const tempOutputPath = path.join(downloadDir, tempOutputName)
+                const finalOutputPath = path.join(downloadDir, `${filename}.mp4`)
+                
+                // 使用 ffmpeg 合并
+                const ffmpegArgs = [
+                  '-f', 'concat',
+                  '-safe', '0',
+                  '-i', concatListPath,
+                  '-c', 'copy',
+                  '-y',
+                  tempOutputPath
+                ]
+                
+                console.log('ffmpeg 命令:', 'ffmpeg', ffmpegArgs.join(' '))
+                
+                const mergeProcess = spawn('ffmpeg', ffmpegArgs, { cwd: segmentsFolder })
+                let mergeError = ''
+                
+                mergeProcess.stderr.on('data', (data) => {
+                  console.log('ffmpeg:', data.toString())
+                  mergeError += data.toString()
+                })
+                
+                mergeProcess.on('close', (mergeCode) => {
+                  console.log('ffmpeg 进程结束，返回码:', mergeCode)
+                  
+                  // 删除 concat 列表
+                  try { fs.unlinkSync(concatListPath) } catch (e) {}
+                  
+                  if (mergeCode === 0 && fs.existsSync(tempOutputPath)) {
+                    // 重命名为最终文件名
+                    try {
+                      if (fs.existsSync(finalOutputPath)) {
+                        fs.unlinkSync(finalOutputPath)
+                      }
+                      fs.renameSync(tempOutputPath, finalOutputPath)
+                      console.log('文件已重命名为:', finalOutputPath)
+                    } catch (renameErr) {
+                      console.error('重命名失败:', renameErr)
+                    }
+                    
+                    // 删除临时文件夹
+                    try {
+                      fs.rmSync(targetFolder, { recursive: true, force: true })
+                      console.log('已删除临时文件夹:', targetFolder)
+                    } catch (e) {
+                      console.error('删除临时文件夹失败:', e)
+                    }
+                    
+                    // 添加到历史记录
+                    const history = loadHistory()
+                    history.unshift({
+                      ...task,
+                      downloadedAt: new Date().toISOString(),
+                      outputPath: config.downloadPath
+                    })
+                    saveHistory(history.slice(0, 100))
+                    
+                    resolve({ success: true, taskId: task.id })
+                  } else {
+                    reject(new Error('FFmpeg 合并失败，请点击"手动合并"按钮重试'))
+                  }
+                })
+                
+                mergeProcess.on('error', (err) => {
+                  console.error('ffmpeg 进程错误:', err)
+                  reject(new Error('FFmpeg 未安装或无法运行: ' + err.message))
+                })
+                
+                return // 等待合并完成
+              }
+            }
+          } catch (e) {
+            console.error('自动合并失败:', e)
+          }
+        }
+        
+        // 如果自动合并失败，提示用户使用手动合并按钮
+        reject(new Error('分片下载完成但自动合并失败，请点击"手动合并"按钮'))
+        return
+      }
+      
+      // 如果返回码为 0 或者输出文件已存在，都视为成功
+      if (code === 0 || outputFileExists) {
         // 添加到历史记录
         const history = loadHistory()
         history.unshift({
@@ -1577,6 +1830,11 @@ function downloadM3u8(task, onProgress) {
           outputPath: config.downloadPath
         })
         saveHistory(history.slice(0, 100))
+        
+        // 如果有错误但文件存在，给出警告
+        if (code !== 0 && outputFileExists) {
+          console.log('下载过程有错误但视频文件已生成，视为成功')
+        }
         
         resolve({ success: true, taskId: task.id })
       } else {
@@ -1729,6 +1987,19 @@ function downloadVideo(task, onProgress) {
     const isBilibili = task.url.includes('bilibili.com') || task.url.includes('b23.tv')
     if (isBilibili) {
       args.push('--no-check-certificate')
+    }
+
+    // 应用匹配规则中的请求头
+    if (matchedRule && matchedRule.headers) {
+      try {
+        const headers = JSON.parse(matchedRule.headers)
+        Object.entries(headers).forEach(([key, value]) => {
+          args.push('--add-header', `${key}:${value}`)
+        })
+        console.log('下载应用规则请求头:', matchedRule.name, '->', headers)
+      } catch (e) {
+        console.error('解析规则请求头失败:', e)
+      }
     }
 
     // 应用匹配规则中的自定义 yt-dlp 参数
@@ -2293,6 +2564,226 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('删除文件异常:', error)
       return { deleted: false, deletedFiles: [], error: error.message }
+    }
+  })
+
+  // 手动合并 m3u8 下载的临时文件（使用 ffmpeg）
+  ipcMain.handle('m3u8:merge', async (_, taskTitle, saveName) => {
+    const config = loadConfig()
+    const downloadPath = config.downloadPath
+    
+    if (!taskTitle) {
+      return { success: false, error: '任务标题为空' }
+    }
+    
+    // 清理标题中的非法字符
+    const cleanTitle = taskTitle.replace(/[<>:"/\\|?*]/g, '_').trim()
+    // 保存文件名（如果提供的话）
+    const finalName = saveName ? saveName.replace(/[<>:"/\\|?*]/g, '_').trim() : cleanTitle
+    
+    // 临时文件目录
+    const tmpDir = path.join(downloadPath, '.download_cache')
+    
+    console.log('尝试合并视频:', cleanTitle)
+    console.log('保存文件名:', finalName)
+    console.log('临时目录:', tmpDir)
+    
+    if (!fs.existsSync(tmpDir)) {
+      return { success: false, error: '临时文件目录不存在，可能已被清理' }
+    }
+    
+    // 查找匹配的临时文件夹
+    let targetFolder = null
+    let segmentsFolder = null
+    
+    try {
+      const folders = fs.readdirSync(tmpDir)
+      for (const folder of folders) {
+        // 模糊匹配文件夹名
+        if (folder.includes(cleanTitle) || cleanTitle.includes(folder.substring(0, 20))) {
+          targetFolder = path.join(tmpDir, folder)
+          // 分片文件夹通常是 0____ 这样的命名
+          const subItems = fs.readdirSync(targetFolder)
+          for (const sub of subItems) {
+            const subPath = path.join(targetFolder, sub)
+            if (fs.statSync(subPath).isDirectory() && sub.match(/^\d/)) {
+              segmentsFolder = subPath
+              break
+            }
+          }
+          if (segmentsFolder) break
+        }
+      }
+      
+      if (!targetFolder) {
+        // 尝试列出所有可用的文件夹
+        const availableFolders = folders.join(', ')
+        return { success: false, error: `未找到匹配的临时文件夹。可用文件夹: ${availableFolders}` }
+      }
+      
+      if (!segmentsFolder) {
+        return { success: false, error: '未找到分片文件夹' }
+      }
+      
+      console.log('找到临时文件夹:', targetFolder)
+      console.log('分片文件夹:', segmentsFolder)
+      
+      // 获取所有 .ts 或 .m4s 文件并按数字排序
+      const allFiles = fs.readdirSync(segmentsFolder)
+      const tsFiles = allFiles.filter(f => f.endsWith('.ts') || f.endsWith('.m4s'))
+        .sort((a, b) => {
+          const numA = parseInt(a.replace(/\.(ts|m4s)$/, ''))
+          const numB = parseInt(b.replace(/\.(ts|m4s)$/, ''))
+          return numA - numB
+        })
+      
+      if (tsFiles.length === 0) {
+        return { success: false, error: '未找到 .ts 或 .m4s 分片文件' }
+      }
+      
+      console.log(`找到 ${tsFiles.length} 个分片文件`)
+      
+      // 在分片目录中创建 concat 列表（避免路径编码问题）
+      const concatListPath = path.join(segmentsFolder, 'concat_list.txt')
+      // 使用相对文件名
+      const concatContent = tsFiles.map(f => `file '${f}'`).join('\n')
+      fs.writeFileSync(concatListPath, concatContent, 'ascii')
+      
+      console.log('创建 concat 列表:', concatListPath)
+      
+      // 输出文件路径 - 使用临时英文名避免编码问题
+      const tempOutputName = `merged_${Date.now()}.mp4`
+      const tempOutputPath = path.join(downloadPath, tempOutputName)
+      const finalOutputPath = path.join(downloadPath, `${finalName}.mp4`)
+      
+      // 使用 ffmpeg 合并
+      return new Promise((resolve) => {
+        const ffmpegArgs = [
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', concatListPath,
+          '-c', 'copy',
+          '-y',  // 覆盖已存在的文件
+          tempOutputPath
+        ]
+        
+        console.log('ffmpeg 命令:', 'ffmpeg', ffmpegArgs.join(' '))
+        
+        const mergeProcess = spawn('ffmpeg', ffmpegArgs, { cwd: segmentsFolder })
+        let mergeOutput = ''
+        let mergeError = ''
+        
+        mergeProcess.stdout.on('data', (data) => {
+          const output = data.toString()
+          console.log('ffmpeg stdout:', output)
+          mergeOutput += output
+        })
+        
+        mergeProcess.stderr.on('data', (data) => {
+          const output = data.toString()
+          console.log('ffmpeg stderr:', output)
+          mergeError += output
+        })
+        
+        mergeProcess.on('close', (code) => {
+          console.log('ffmpeg 进程结束，返回码:', code)
+          
+          // 删除临时的 concat 列表文件
+          try {
+            fs.unlinkSync(concatListPath)
+          } catch (e) {}
+          
+          if (code === 0 && fs.existsSync(tempOutputPath)) {
+            // 重命名为最终文件名
+            try {
+              // 如果目标文件已存在，先删除
+              if (fs.existsSync(finalOutputPath)) {
+                fs.unlinkSync(finalOutputPath)
+              }
+              fs.renameSync(tempOutputPath, finalOutputPath)
+              console.log('文件已重命名为:', finalOutputPath)
+            } catch (renameErr) {
+              console.error('重命名失败，保留临时文件名:', renameErr)
+              // 如果重命名失败，使用临时文件名
+              resolve({ 
+                success: true, 
+                message: `合并成功！共合并 ${tsFiles.length} 个分片（文件名使用临时名称）`,
+                outputPath: tempOutputPath
+              })
+              return
+            }
+            
+            // 删除临时文件夹
+            try {
+              fs.rmSync(targetFolder, { recursive: true, force: true })
+              console.log('已删除临时文件夹:', targetFolder)
+            } catch (e) {
+              console.error('删除临时文件夹失败:', e)
+            }
+            
+            resolve({ 
+              success: true, 
+              message: `合并成功！共合并 ${tsFiles.length} 个分片，临时文件已清理`,
+              outputPath: finalOutputPath
+            })
+          } else {
+            resolve({ 
+              success: false, 
+              error: '合并失败: ' + (mergeError || mergeOutput || '未知错误')
+            })
+          }
+        })
+        
+        mergeProcess.on('error', (err) => {
+          console.error('ffmpeg 进程错误:', err)
+          resolve({ success: false, error: 'ffmpeg 未安装或无法运行: ' + err.message })
+        })
+      })
+      
+    } catch (error) {
+      console.error('合并失败:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  // 列出可以重试/续传的任务
+  ipcMain.handle('m3u8:listResumable', async () => {
+    const config = loadConfig()
+    const downloadPath = config.downloadPath
+    const tmpDir = path.join(downloadPath, '.download_cache')
+    
+    if (!fs.existsSync(tmpDir)) {
+      return []
+    }
+    
+    try {
+      const folders = fs.readdirSync(tmpDir)
+      const resumable = []
+      
+      for (const folder of folders) {
+        const folderPath = path.join(tmpDir, folder)
+        const stat = fs.statSync(folderPath)
+        
+        if (stat.isDirectory()) {
+          // 检查文件夹中是否有 .ts 或 .m4s 片段文件
+          const files = fs.readdirSync(folderPath)
+          const hasSegments = files.some(f => f.endsWith('.ts') || f.endsWith('.m4s') || f.endsWith('.mp4'))
+          
+          if (hasSegments) {
+            resumable.push({
+              name: folder,
+              path: folderPath,
+              modifiedAt: stat.mtime,
+              fileCount: files.length
+            })
+          }
+        }
+      }
+      
+      return resumable.sort((a, b) => b.modifiedAt - a.modifiedAt)
+    } catch (error) {
+      console.error('列出可续传任务失败:', error)
+      return []
     }
   })
 })

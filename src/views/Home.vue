@@ -171,6 +171,23 @@
       <div class="video-header">
         <h2>{{ isPlaylist ? '播放列表' : '视频信息' }}</h2>
         <div class="header-actions">
+          <!-- 打开浏览器重新解析按钮 -->
+          <button 
+            class="btn btn-reparse"
+            :disabled="smartParsing"
+            @click="startSmartParseWithBrowser"
+            title="打开浏览器重新捕获视频"
+          >
+            <svg v-if="smartParsing" viewBox="0 0 24 24" width="16" height="16" class="animate-spin">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16">
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M3 9h18M9 21V9" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            {{ smartParsing ? smartParseStatus : '浏览器解析' }}
+          </button>
           <button class="btn btn-text" @click="clearResult">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2"/>
@@ -1887,6 +1904,41 @@ const copyDownloadCommand = async () => {
     font-size: 16px;
     font-weight: 600;
     color: var(--text-primary);
+  }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.btn-reparse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  }
+  
+  &:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+  
+  svg {
+    flex-shrink: 0;
   }
 }
 

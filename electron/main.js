@@ -1989,7 +1989,29 @@ function downloadVideo(task, onProgress) {
       args.push('--no-check-certificate')
     }
 
-    // 应用匹配规则中的请求头
+    // 添加任务携带的请求头（智能解析时捕获的浏览器请求头）
+    if (task.headers && Object.keys(task.headers).length > 0) {
+      console.log('使用任务捕获的请求头:', task.headers)
+      for (const [key, value] of Object.entries(task.headers)) {
+        if (value) {
+          args.push('--add-header', `${key}:${value}`)
+        }
+      }
+    }
+    
+    // 如果没有 Referer，尝试从视频来源页面添加
+    if (task.pageUrl && (!task.headers || !task.headers['Referer'])) {
+      args.push('--add-header', `Referer:${task.pageUrl}`)
+      console.log('添加 Referer:', task.pageUrl)
+    }
+    
+    // 如果没有 User-Agent，添加默认的浏览器 User-Agent
+    if (!task.headers || !task.headers['User-Agent']) {
+      const defaultUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      args.push('--add-header', `User-Agent:${defaultUA}`)
+    }
+
+    // 应用匹配规则中的请求头（优先级高于任务请求头）
     if (matchedRule && matchedRule.headers) {
       try {
         const headers = JSON.parse(matchedRule.headers)

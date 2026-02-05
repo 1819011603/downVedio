@@ -109,12 +109,17 @@
               <option :value="1">1 秒</option>
               <option :value="3">3 秒</option>
               <option :value="5">5 秒</option>
+              <option :value="8">8 秒</option>
+              <option :value="10">10 秒</option>
+              <option :value="12">12 秒</option>
               <option :value="15">15 秒</option>
               <option :value="30">30 秒</option>
               <option :value="45">45 秒</option>
               <option :value="60">60 秒</option>
               <option :value="90">90 秒</option>
               <option :value="120">120 秒</option>
+              <option :value="300">300 秒</option>
+              <option :value="1800">1800 秒</option>
             </select>
           </div>
           
@@ -1262,14 +1267,27 @@ const addToDownload = () => {
   
   // 获取选中URL的请求头（智能解析时）
   let downloadHeaders = {}
-  if (isSmartParseResult && videoInfo.value._videoUrlsWithHeaders) {
-    const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
-      item => item.url === downloadUrl
-    )
-    if (urlWithHeaders) {
-      downloadHeaders = urlWithHeaders.headers
-    } else if (videoInfo.value._bestUrlHeaders) {
-      downloadHeaders = videoInfo.value._bestUrlHeaders
+  if (isSmartParseResult) {
+    // 首先尝试从捕获的请求头中获取
+    if (videoInfo.value._videoUrlsWithHeaders) {
+      const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
+        item => item.url === downloadUrl
+      )
+      if (urlWithHeaders && urlWithHeaders.headers && Object.keys(urlWithHeaders.headers).length > 0) {
+        downloadHeaders = { ...urlWithHeaders.headers }
+      } else if (videoInfo.value._bestUrlHeaders && Object.keys(videoInfo.value._bestUrlHeaders).length > 0) {
+        downloadHeaders = { ...videoInfo.value._bestUrlHeaders }
+      }
+    }
+    
+    // 如果没有 Referer，使用原始解析的 URL 作为 Referer
+    if (!downloadHeaders['Referer'] && !downloadHeaders['referer']) {
+      downloadHeaders['Referer'] = url.value
+    }
+    
+    // 如果没有 User-Agent，添加默认的
+    if (!downloadHeaders['User-Agent'] && !downloadHeaders['user-agent']) {
+      downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
   }
   
@@ -1285,6 +1303,7 @@ const addToDownload = () => {
     resolution: resolutionLabel,
     filesize: formatInfo ? getFileSize(formatInfo) : 0,
     isSmartParse: isSmartParseResult,  // 标记是否来自智能解析
+    pageUrl: isSmartParseResult ? url.value : null,  // 保存来源页面 URL
     headers: downloadHeaders  // 保存请求头（用于下载时使用）
   })
   

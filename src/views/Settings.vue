@@ -94,6 +94,8 @@
               <option :value="4">4 线程</option>
               <option :value="8">8 线程</option>
               <option :value="16">16 线程</option>
+              <option :value="32">32 线程</option>
+              <option :value="64">64 线程</option>
             </select>
           </div>
         </div>
@@ -138,11 +140,16 @@
             <select class="input select" v-model.number="config.autoRemoveCompleted">
               <option :value="-1">不自动移除</option>
               <option :value="0">立即移除</option>
-              <option :value="3">3 秒后</option>
-              <option :value="5">5 秒后</option>
               <option :value="10">10 秒后</option>
               <option :value="30">30 秒后</option>
               <option :value="60">1 分钟后</option>
+              <option :value="300">5 分钟后</option>
+              <option :value="600">10 分钟后</option>
+              <option :value="1800">30 分钟后</option>
+              <option :value="3600">60 分钟后</option>
+              <option :value="3600">60 分钟后</option>
+              <option :value="326400">1 天后</option>
+
             </select>
           </div>
         </div>

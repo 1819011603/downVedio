@@ -583,11 +583,24 @@ async function smartParse(url, options = {}) {
     })
     
     // 监听请求头（捕获每个视频请求的完整请求头）
+    // 注意：有些视频 URL 可能在 onHeadersReceived 中才被识别（通过 Content-Type）
+    // 所以这里需要对所有可能是视频的 URL 都保存请求头
     session.webRequest.onBeforeSendHeaders((details, callback) => {
       const reqUrl = details.url
       
-      // 只处理已捕获的视频 URL
-      if (capturedUrls.includes(reqUrl) && !capturedHeaders[reqUrl]) {
+      // 跳过 data: 和 blob: URL
+      if (reqUrl.startsWith('data:') || reqUrl.startsWith('blob:')) {
+        callback({ cancel: false, requestHeaders: details.requestHeaders })
+        return
+      }
+      
+      // 检查是否可能是视频 URL（通过 URL 模式 或 已经捕获的 URL）
+      const isVideo = videoPatterns.some(pattern => pattern.test(reqUrl))
+      const isExcluded = excludePatterns.some(pattern => pattern.test(reqUrl))
+      const isAlreadyCaptured = capturedUrls.includes(reqUrl)
+      
+      // 如果可能是视频 URL，保存请求头
+      if ((isVideo || isAlreadyCaptured) && !isExcluded && !capturedHeaders[reqUrl]) {
         // 保存重要的请求头
         const headers = {}
         const importantHeaders = [
@@ -613,6 +626,11 @@ async function smartParse(url, options = {}) {
         // 如果没有 Referer，使用页面 URL
         if (!headers['Referer'] && !headers['referer']) {
           headers['Referer'] = url
+        }
+        
+        // 确保有 User-Agent
+        if (!headers['User-Agent'] && !headers['user-agent']) {
+          headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
         capturedHeaders[reqUrl] = headers
@@ -1604,7 +1622,11 @@ function downloadM3u8(task, onProgress) {
       headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
-    console.log('使用的请求头:', headers)
+    console.log('========== M3U8 下载请求头 ==========')
+    console.log('任务携带的 headers:', task.headers)
+    console.log('任务的 pageUrl:', task.pageUrl)
+    console.log('最终使用的请求头:', headers)
+    console.log('=====================================')
     
     // N_m3u8DL-RE 使用 -H 参数添加请求头
     for (const [key, value] of Object.entries(headers)) {
@@ -2243,12 +2265,13 @@ function isM3u8FallbackError(errorMessage) {
 async function downloadWithRetry(task, onProgress, maxRetries = 3, retryDelay = 3000) {
   let lastError = null
   
-  // 检测是否是智能解析的 m3u8 URL，如果是则使用 N_m3u8DL-RE
-  let useM3u8Downloader = task.isSmartParse && isM3u8Url(task.url)
+  // 检测是否是 m3u8 URL，优先使用 N_m3u8DL-RE
+  // 无论是智能解析还是直接输入的 m3u8 URL，都优先使用 N_m3u8DL-RE
+  let useM3u8Downloader = isM3u8Url(task.url)
   let triedFallback = false  // 是否已尝试回退到 yt-dlp
   
   if (useM3u8Downloader) {
-    console.log('检测到智能解析的 m3u8 URL，使用 N_m3u8DL-RE 下载')
+    console.log('检测到 m3u8 URL，优先使用 N_m3u8DL-RE 下载:', task.url.substring(0, 100))
   }
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {

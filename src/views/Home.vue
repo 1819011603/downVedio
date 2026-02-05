@@ -1311,10 +1311,12 @@ const addToDownload = () => {
     ? (selectedVideoUrl.value || videoInfo.value._smartParseUrl) 
     : url.value
   
-  // 获取选中URL的请求头（智能解析时）
+  // 获取请求头
   let downloadHeaders = {}
+  let pageUrl = null
+  
   if (isSmartParseResult) {
-    // 首先尝试从捕获的请求头中获取
+    // 智能解析：从捕获的请求头中获取
     if (videoInfo.value._videoUrlsWithHeaders) {
       const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
         item => item.url === downloadUrl
@@ -1326,15 +1328,27 @@ const addToDownload = () => {
       }
     }
     
-    // 如果没有 Referer，使用原始解析的 URL 作为 Referer
+    // 使用原始解析的 URL 作为来源页面
+    pageUrl = url.value
+    
+    // 如果没有 Referer，使用来源页面 URL
     if (!downloadHeaders['Referer'] && !downloadHeaders['referer']) {
       downloadHeaders['Referer'] = url.value
     }
-    
-    // 如果没有 User-Agent，添加默认的
-    if (!downloadHeaders['User-Agent'] && !downloadHeaders['user-agent']) {
-      downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  } else {
+    // 直接输入 URL：尝试从 URL 中提取域名作为 Referer
+    try {
+      const urlObj = new URL(downloadUrl)
+      downloadHeaders['Referer'] = `${urlObj.protocol}//${urlObj.host}/`
+      pageUrl = downloadHeaders['Referer']
+    } catch (e) {
+      console.log('无法解析 URL:', e)
     }
+  }
+  
+  // 确保始终有 User-Agent
+  if (!downloadHeaders['User-Agent'] && !downloadHeaders['user-agent']) {
+    downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   }
   
   appStore.addToQueue({
@@ -1349,7 +1363,7 @@ const addToDownload = () => {
     resolution: resolutionLabel,
     filesize: formatInfo ? getFileSize(formatInfo) : 0,
     isSmartParse: isSmartParseResult,  // 标记是否来自智能解析
-    pageUrl: isSmartParseResult ? url.value : null,  // 保存来源页面 URL
+    pageUrl: pageUrl,  // 保存来源页面 URL（用于 Referer）
     headers: downloadHeaders  // 保存请求头（用于下载时使用）
   })
   
@@ -1569,28 +1583,42 @@ const batchDownloadVideos = () => {
     
     // 获取该 URL 的请求头
     let downloadHeaders = {}
-    if (isSmartParseResult) {
-      if (videoInfo.value._videoUrlsWithHeaders) {
-        const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
-          item => item.url === videoUrl
-        )
-        if (urlWithHeaders && urlWithHeaders.headers && Object.keys(urlWithHeaders.headers).length > 0) {
-          downloadHeaders = { ...urlWithHeaders.headers }
-        } else if (videoInfo.value._bestUrlHeaders && Object.keys(videoInfo.value._bestUrlHeaders).length > 0) {
-          downloadHeaders = { ...videoInfo.value._bestUrlHeaders }
-        }
-      }
-      
-      // 确保有 Referer
-      if (!downloadHeaders['Referer'] && !downloadHeaders['referer']) {
-        downloadHeaders['Referer'] = url.value
-      }
-      
-      // 确保有 User-Agent
-      if (!downloadHeaders['User-Agent'] && !downloadHeaders['user-agent']) {
-        downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    
+    // 尝试从捕获的请求头中获取
+    if (videoInfo.value._videoUrlsWithHeaders) {
+      const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
+        item => item.url === videoUrl
+      )
+      if (urlWithHeaders && urlWithHeaders.headers && Object.keys(urlWithHeaders.headers).length > 0) {
+        downloadHeaders = { ...urlWithHeaders.headers }
+        console.log('使用捕获的请求头:', videoUrl.substring(0, 50), downloadHeaders)
+      } else if (videoInfo.value._bestUrlHeaders && Object.keys(videoInfo.value._bestUrlHeaders).length > 0) {
+        downloadHeaders = { ...videoInfo.value._bestUrlHeaders }
+        console.log('使用 bestUrl 的请求头:', downloadHeaders)
       }
     }
+    
+    // 确保有 Referer（无论是否智能解析）
+    if (!downloadHeaders['Referer'] && !downloadHeaders['referer']) {
+      if (isSmartParseResult) {
+        downloadHeaders['Referer'] = url.value
+      } else {
+        // 从视频 URL 提取域名
+        try {
+          const urlObj = new URL(videoUrl)
+          downloadHeaders['Referer'] = `${urlObj.protocol}//${urlObj.host}/`
+        } catch (e) {
+          console.log('无法解析 URL:', e)
+        }
+      }
+    }
+    
+    // 确保有 User-Agent
+    if (!downloadHeaders['User-Agent'] && !downloadHeaders['user-agent']) {
+      downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    console.log('最终请求头:', downloadHeaders)
     
     // 生成带序号的标题：
     // - 如果总视频数 > 1，始终使用原始列表中的序号：原标题-1, 原标题-2, ...

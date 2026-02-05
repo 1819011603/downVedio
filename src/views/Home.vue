@@ -285,40 +285,80 @@
             {{ truncateText(videoInfo.description, 150) }}
           </p>
           
-          <!-- 智能解析多视频来源选择 -->
-          <div v-if="videoInfo._allVideoUrls && videoInfo._allVideoUrls.length > 1" class="video-source-section">
-            <label class="source-label">
-              <svg viewBox="0 0 24 24" width="14" height="14">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" fill="none"/>
-              </svg>
-              选择视频来源 (共 {{ videoInfo._allVideoUrls.length }} 个)
-            </label>
-            <select class="source-select" v-model="selectedVideoUrl">
-              <option 
+          <!-- 智能解析多视频来源选择（支持多选） -->
+          <div v-if="videoInfo._allVideoUrls && videoInfo._allVideoUrls.length > 0" class="video-source-section">
+            <div class="source-header">
+              <label class="source-label">
+                <svg viewBox="0 0 24 24" width="14" height="14">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" fill="none"/>
+                </svg>
+                视频来源 (共 {{ videoInfo._allVideoUrls.length }} 个，已选 {{ selectedVideoUrls.size }} 个)
+              </label>
+              <div class="source-actions">
+                <button class="btn btn-text btn-sm" @click="selectAllVideos">
+                  <svg viewBox="0 0 24 24" width="14" height="14">
+                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <polyline points="9 11 12 14 22 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                  </svg>
+                  全选
+                </button>
+                <button class="btn btn-text btn-sm" @click="deselectAllVideos">
+                  <svg viewBox="0 0 24 24" width="14" height="14">
+                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                  </svg>
+                  取消
+                </button>
+              </div>
+            </div>
+            
+            <!-- 视频列表（按出现顺序排列） -->
+            <div class="video-source-list">
+              <div 
                 v-for="(videoUrl, index) in videoInfo._allVideoUrls" 
                 :key="index"
-                :value="videoUrl"
+                class="video-source-item"
+                :class="{ selected: selectedVideoUrls.has(index) }"
+                @click="toggleVideoSelection(index)"
               >
-                {{ getVideoSourceLabel(videoUrl, index) }}
-              </option>
-            </select>
-            <div class="source-preview">
-              <div class="preview-url-wrapper">
-                <input 
-                  type="text" 
-                  class="preview-url-input" 
-                  :value="selectedVideoUrl" 
-                  readonly 
-                  @click="$event.target.select()"
-                />
+                <div class="source-checkbox">
+                  <input 
+                    type="checkbox" 
+                    :checked="selectedVideoUrls.has(index)"
+                    @click.stop="toggleVideoSelection(index)"
+                  />
+                </div>
+                <div class="source-index">{{ index + 1 }}</div>
+                <div class="source-info">
+                  <div class="source-name">
+                    {{ getVideoSourceLabel(videoUrl, index) }}
+                    <span class="source-size" v-if="getVideoSizeByIndex(index)">
+                      {{ formatFileSize(getVideoSizeByIndex(index)) }}
+                    </span>
+                    <span class="source-size stream" v-else-if="isStreamingFormat(videoUrl)">
+                      流媒体
+                    </span>
+                  </div>
+                  <div class="source-url" :title="videoUrl">{{ videoUrl }}</div>
+                </div>
+                <button class="btn btn-icon btn-sm" @click.stop="copyVideoUrlByIndex(index)" title="复制链接">
+                  <svg viewBox="0 0 24 24" width="14" height="14">
+                    <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+                  </svg>
+                </button>
               </div>
-              <button class="btn btn-copy" @click="copyVideoUrl" title="复制链接">
-                <svg viewBox="0 0 24 24" width="14" height="14">
-                  <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
+            </div>
+            
+            <!-- 批量下载按钮 -->
+            <div class="batch-download-actions" v-if="selectedVideoUrls.size > 0">
+              <button class="btn btn-primary" @click="batchDownloadVideos" :disabled="selectedVideoUrls.size === 0">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2"/>
                 </svg>
-                复制
+                一键下载选中的 {{ selectedVideoUrls.size }} 个视频
               </button>
             </div>
           </div>
@@ -584,6 +624,7 @@ const errorCopied = ref(false)
 const smartParsing = ref(false)
 const smartParseStatus = ref('')
 const selectedVideoUrl = ref('')  // 选中的视频 URL（智能解析有多个来源时）
+const selectedVideoUrls = ref(new Set())  // 多选的视频索引集合
 const smartParseFailed = ref(false)  // 智能解析是否失败（用于显示重新解析选项）
 const smartParseWaitTime = ref(5)  // 用户操作等待时间（秒）
 
@@ -1031,6 +1072,8 @@ const startSmartParse = async (showBrowser = false) => {
       
       // 设置默认选中的视频 URL
       selectedVideoUrl.value = result.bestUrl
+      // 默认选中第一个视频（索引 0）
+      selectedVideoUrls.value = new Set([0])
       
       appStore.showToast(`成功捕获到 ${result.videoUrls.length} 个视频地址`, 'success')
       
@@ -1435,6 +1478,20 @@ const getVideoSourceLabel = (videoUrl, index) => {
   }
 }
 
+// 获取指定索引视频的文件大小
+const getVideoSizeByIndex = (index) => {
+  if (!videoInfo.value?._videoUrlsWithHeaders) return null
+  const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders[index]
+  return urlWithHeaders?.size || null
+}
+
+// 判断是否是流媒体格式（m3u8/mpd 等无法获取大小的格式）
+const isStreamingFormat = (videoUrl) => {
+  if (!videoUrl) return false
+  const lowerUrl = videoUrl.toLowerCase()
+  return lowerUrl.includes('.m3u8') || lowerUrl.includes('.mpd')
+}
+
 // 复制视频 URL
 const copyVideoUrl = async () => {
   try {
@@ -1443,6 +1500,115 @@ const copyVideoUrl = async () => {
   } catch (e) {
     appStore.showToast('复制失败', 'error')
   }
+}
+
+// 复制指定索引的视频 URL
+const copyVideoUrlByIndex = async (index) => {
+  try {
+    const videoUrl = videoInfo.value._allVideoUrls[index]
+    await navigator.clipboard.writeText(videoUrl)
+    appStore.showToast('视频链接已复制', 'success')
+  } catch (e) {
+    appStore.showToast('复制失败', 'error')
+  }
+}
+
+// 切换视频选择状态
+const toggleVideoSelection = (index) => {
+  if (selectedVideoUrls.value.has(index)) {
+    selectedVideoUrls.value.delete(index)
+  } else {
+    selectedVideoUrls.value.add(index)
+  }
+  // 触发响应式更新
+  selectedVideoUrls.value = new Set(selectedVideoUrls.value)
+  
+  // 同时更新 selectedVideoUrl（用于单个下载）
+  if (selectedVideoUrls.value.size === 1) {
+    const selectedIndex = [...selectedVideoUrls.value][0]
+    selectedVideoUrl.value = videoInfo.value._allVideoUrls[selectedIndex]
+  }
+}
+
+// 全选所有视频
+const selectAllVideos = () => {
+  if (!videoInfo.value?._allVideoUrls) return
+  const allIndices = videoInfo.value._allVideoUrls.map((_, index) => index)
+  selectedVideoUrls.value = new Set(allIndices)
+}
+
+// 取消全选
+const deselectAllVideos = () => {
+  selectedVideoUrls.value = new Set()
+}
+
+// 批量下载选中的视频
+const batchDownloadVideos = () => {
+  if (!videoInfo.value?._allVideoUrls || selectedVideoUrls.value.size === 0) return
+  
+  const baseTitle = videoInfo.value.title || '视频'
+  const isSmartParseResult = !!videoInfo.value._smartParseUrl
+  const totalVideos = videoInfo.value._allVideoUrls.length  // 总视频数量
+  
+  // 按索引排序
+  const sortedIndices = [...selectedVideoUrls.value].sort((a, b) => a - b)
+  
+  // 创建下载任务
+  const tasks = sortedIndices.map((index) => {
+    const videoUrl = videoInfo.value._allVideoUrls[index]
+    
+    // 获取该 URL 的请求头
+    let downloadHeaders = {}
+    if (isSmartParseResult) {
+      if (videoInfo.value._videoUrlsWithHeaders) {
+        const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
+          item => item.url === videoUrl
+        )
+        if (urlWithHeaders && urlWithHeaders.headers && Object.keys(urlWithHeaders.headers).length > 0) {
+          downloadHeaders = { ...urlWithHeaders.headers }
+        } else if (videoInfo.value._bestUrlHeaders && Object.keys(videoInfo.value._bestUrlHeaders).length > 0) {
+          downloadHeaders = { ...videoInfo.value._bestUrlHeaders }
+        }
+      }
+      
+      // 确保有 Referer
+      if (!downloadHeaders['Referer'] && !downloadHeaders['referer']) {
+        downloadHeaders['Referer'] = url.value
+      }
+      
+      // 确保有 User-Agent
+      if (!downloadHeaders['User-Agent'] && !downloadHeaders['user-agent']) {
+        downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    }
+    
+    // 生成带序号的标题：
+    // - 如果总视频数 > 1，始终使用原始列表中的序号：原标题-1, 原标题-2, ...
+    // - 如果总视频数 = 1，不加后缀
+    const taskTitle = totalVideos > 1 
+      ? `${baseTitle}-${index + 1}`
+      : baseTitle
+    
+    return {
+      url: videoUrl,
+      title: taskTitle,
+      thumbnail: videoInfo.value.thumbnail,
+      duration: videoInfo.value.duration,
+      uploader: videoInfo.value.uploader,
+      format: 'best',
+      formatType: formatType.value,
+      resolution: '最佳',
+      isSmartParse: isSmartParseResult,
+      pageUrl: isSmartParseResult ? url.value : null,
+      headers: downloadHeaders,
+      index: index + 1  // 使用原始列表中的序号
+    }
+  })
+  
+  // 添加到下载队列
+  appStore.addToQueue(tasks)
+  appStore.showToast(`已添加 ${tasks.length} 个视频到下载队列`, 'success')
+  router.push('/queue')
 }
 
 // 生成解析命令
@@ -2135,6 +2301,13 @@ const copyDownloadCommand = async () => {
   border-radius: var(--radius-md);
 }
 
+.source-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-sm);
+}
+
 .source-label {
   display: flex;
   align-items: center;
@@ -2142,10 +2315,128 @@ const copyDownloadCommand = async () => {
   font-size: 13px;
   font-weight: 500;
   color: var(--primary);
-  margin-bottom: var(--spacing-sm);
   
   svg {
     flex-shrink: 0;
+  }
+}
+
+.source-actions {
+  display: flex;
+  gap: 8px;
+  
+  .btn-sm {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+}
+
+// 视频来源列表
+.video-source-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-dark);
+}
+
+.video-source-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:last-child {
+    border-bottom: none;
+  }
+  
+  &:hover {
+    background: rgba(139, 92, 246, 0.1);
+  }
+  
+  &.selected {
+    background: rgba(139, 92, 246, 0.15);
+    border-left: 3px solid var(--primary);
+  }
+}
+
+.source-checkbox {
+  flex-shrink: 0;
+  
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--primary);
+  }
+}
+
+.source-index {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(139, 92, 246, 0.2);
+  border-radius: 50%;
+}
+
+.source-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.source-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-size {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--primary);
+  background: rgba(139, 92, 246, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.source-size.stream {
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.source-url {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-download-actions {
+  margin-top: var(--spacing-md);
+  display: flex;
+  justify-content: center;
+  
+  .btn-primary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 }
 

@@ -307,6 +307,7 @@ async function smartParse(url, options = {}) {
   const showBrowser = options.show || false  // 是否显示浏览器窗口
   const capturedUrls = []
   const capturedHeaders = {}  // 保存每个URL的请求头
+  const capturedSizes = {}    // 保存每个URL的文件大小
   let pageTitle = ''
   let pageThumbnail = ''
   
@@ -530,10 +531,11 @@ async function smartParse(url, options = {}) {
         console.log('最佳视频 URL:', sortedUrls[0].substring(0, 100))
       }
 
-      // 构建带请求头的视频信息
+      // 构建带请求头和文件大小的视频信息
       const videoUrlsWithHeaders = sortedUrls.map(videoUrl => ({
         url: videoUrl,
-        headers: capturedHeaders[videoUrl] || {}
+        headers: capturedHeaders[videoUrl] || {},
+        size: capturedSizes[videoUrl] || null  // 文件大小（字节）
       }))
       
       cleanup()
@@ -633,6 +635,16 @@ async function smartParse(url, options = {}) {
       const contentType = details.responseHeaders?.['content-type']?.[0] || 
                           details.responseHeaders?.['Content-Type']?.[0] || ''
       
+      // 获取文件大小（Content-Length）
+      const contentLength = details.responseHeaders?.['content-length']?.[0] || 
+                            details.responseHeaders?.['Content-Length']?.[0] || null
+      
+      // 如果已经捕获了这个 URL，更新其文件大小
+      if (capturedUrls.includes(reqUrl) && contentLength && !capturedSizes[reqUrl]) {
+        capturedSizes[reqUrl] = parseInt(contentLength, 10)
+        console.log('📦 获取文件大小:', reqUrl.substring(0, 80), '大小:', capturedSizes[reqUrl])
+      }
+      
       // 根据配置的格式，检测 Content-Type
       let isAllowedContentType = false
       
@@ -670,6 +682,12 @@ async function smartParse(url, options = {}) {
         if (!isExcluded) {
           console.log('✅ 捕获视频响应:', reqUrl.substring(0, 200), '类型:', contentType)
           capturedUrls.push(reqUrl)
+          
+          // 保存文件大小
+          if (contentLength) {
+            capturedSizes[reqUrl] = parseInt(contentLength, 10)
+            console.log('📦 文件大小:', capturedSizes[reqUrl])
+          }
           
           if (mainWindow) {
             mainWindow.webContents.send('smart-parse:progress', {

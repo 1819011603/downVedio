@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 历史记录
   getHistory: () => ipcRenderer.invoke('history:get'),
+  saveHistory: (history) => ipcRenderer.invoke('history:save', history),
   clearHistory: () => ipcRenderer.invoke('history:clear'),
 
   // 自定义规则

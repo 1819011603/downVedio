@@ -452,10 +452,26 @@ async function smartParse(url, options = {}) {
     const cleanup = () => {
       if (timeoutId) clearTimeout(timeoutId)
       if (smartParseWindow && !smartParseWindow.isDestroyed()) {
+        // 移除所有监听器，防止重复触发
+        smartParseWindow.removeAllListeners('closed')
+        smartParseWindow.removeAllListeners('did-fail-load')
+        smartParseWindow.webContents.removeAllListeners('did-finish-load')
         smartParseWindow.close()
         smartParseWindow = null
       }
     }
+    
+    // 全局错误捕获
+    const handleError = (error) => {
+      if (resolved) return
+      resolved = true
+      console.error('智能解析发生错误:', error)
+      cleanup()
+      reject(error)
+    }
+    
+    // 捕获未处理的错误
+    try {
 
     // 最终排除列表（缩略图等无效 URL）
     const finalExcludePatterns = [
@@ -653,7 +669,13 @@ async function smartParse(url, options = {}) {
         
         // 倒计时提示
         for (let i = waitSeconds; i > 0; i--) {
-          if (mainWindow) {
+          // 检查窗口是否还存在
+          if (resolved || !smartParseWindow || smartParseWindow.isDestroyed()) {
+            console.log('窗口已关闭，停止等待')
+            return
+          }
+          
+          if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('smart-parse:progress', {
               status: 'user-wait',
               message: `请在浏览器中操作（登录/点击播放等），剩余 ${i} 秒...`
@@ -674,6 +696,12 @@ async function smartParse(url, options = {}) {
         })
       }
 
+      // 检查窗口是否还存在
+      if (resolved || !smartParseWindow || smartParseWindow.isDestroyed()) {
+        console.log('窗口已关闭，停止解析')
+        return
+      }
+      
       // 检查 URL 是否应该被排除（缩略图等）
       const shouldExcludeUrl = (url) => {
         const excludeList = [
@@ -718,6 +746,12 @@ async function smartParse(url, options = {}) {
 
       // 尝试从页面提取视频 URL（包括嗅探脚本捕获的）
       const extractVideoFromPage = async () => {
+        // 检查窗口是否还存在
+        if (!smartParseWindow || smartParseWindow.isDestroyed()) {
+          console.log('窗口已关闭，无法提取视频')
+          return
+        }
+        
         try {
           const pageVideoUrls = await smartParseWindow.webContents.executeJavaScript(`
             (function() {
@@ -834,6 +868,11 @@ async function smartParse(url, options = {}) {
           }
 
           try {
+            // 检查窗口是否还存在
+            if (!smartParseWindow || smartParseWindow.isDestroyed()) {
+              return
+            }
+            
             await smartParseWindow.webContents.executeJavaScript(`
               (function() {
                 // 常见的播放按钮选择器
@@ -877,23 +916,138 @@ async function smartParse(url, options = {}) {
     })
 
     // 加载错误处理
-    smartParseWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    // 注意：某些错误码不应该立即失败，比如 Cloudflare 验证会导致 -3 (ERR_ABORTED)
+    smartParseWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (resolved) return
+      
+      // 只处理主框架的错误
+      if (!isMainFrame) {
+        console.log('子框架加载失败，忽略:', errorCode, errorDescription)
+        return
+      }
+      
       console.error('页面加载失败:', errorCode, errorDescription)
+      
+      // 错误码说明：
+      // -3: ERR_ABORTED - 请求被中止（Cloudflare 重定向、验证等）
+      // -2: ERR_FAILED - 通用失败
+      // -6: ERR_FILE_NOT_FOUND - 文件未找到
+      // -7: ERR_TIMED_OUT - 超时
+      // -105: ERR_NAME_NOT_RESOLVED - DNS 解析失败
+      // -106: ERR_INTERNET_DISCONNECTED - 无网络连接
+      
+      // 对于 ERR_ABORTED (-3)，可能是 Cloudflare 验证导致的重定向，不要立即失败
+      // 继续等待用户完成验证
+      if (errorCode === -3) {
+        console.log('检测到请求中止（可能是 Cloudflare 验证），继续等待...')
+        
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('smart-parse:progress', {
+            status: 'cloudflare',
+            message: '检测到安全验证，请在浏览器中完成验证...'
+          })
+        }
+        
+        // 如果浏览器窗口是显示的，给用户时间完成验证
+        if (showBrowser && smartParseWindow && !smartParseWindow.isDestroyed()) {
+          smartParseWindow.setTitle('智能解析 - 请完成安全验证')
+        }
+        
+        // 不要关闭窗口，让用户有机会完成验证
+        return
+      }
+      
+      // 对于其他严重错误，才关闭窗口
       cleanup()
       reject(new Error(`页面加载失败: ${errorDescription}`))
+    })
+
+    // 窗口关闭处理（用户手动关闭或意外关闭）
+    smartParseWindow.on('closed', () => {
+      if (resolved) return
+      resolved = true
+      console.log('智能解析窗口被关闭')
+      
+      if (timeoutId) clearTimeout(timeoutId)
+      smartParseWindow = null
+      
+      // 通知主窗口
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('smart-parse:progress', {
+          status: 'closed',
+          message: '解析窗口已关闭'
+        })
+      }
+      
+      // 返回已捕获的结果（如果有）
+      if (capturedUrls.length > 0) {
+        console.log('窗口关闭，返回已捕获的', capturedUrls.length, '个视频地址')
+        
+        // 过滤无效 URL
+        const filteredUrls = capturedUrls.filter(url => {
+          const shouldExclude = finalExcludePatterns.some(p => p.test(url))
+          return !shouldExclude
+        })
+        
+        const sortedUrls = [...new Set(filteredUrls)].sort((a, b) => {
+          const getScore = (url) => {
+            if (url.includes('.m3u8')) return 100
+            if (url.includes('.mpd')) return 90
+            if (/tc\.qq\.com/i.test(url)) return 85
+            if (/googlevideo/i.test(url)) return 85
+            if (/\.f\d+\.mp4/i.test(url)) return 80
+            if (url.includes('.mp4')) return 50
+            if (url.includes('.flv')) return 40
+            return 0
+          }
+          return getScore(b) - getScore(a)
+        })
+        
+        if (sortedUrls.length > 0) {
+          console.log('窗口关闭但已捕获到视频，返回结果')
+          resolve({
+            success: true,
+            title: pageTitle || '未知标题',
+            thumbnail: pageThumbnail,
+            videoUrls: sortedUrls,
+            bestUrl: sortedUrls[0],
+            warning: '解析窗口被提前关闭，但已捕获到视频地址'
+          })
+        } else {
+          console.log('窗口关闭且过滤后无有效视频')
+          reject(new Error('解析窗口被关闭，未找到有效的视频地址'))
+        }
+      } else {
+        // 没有捕获到任何视频
+        console.log('窗口关闭且未捕获到任何视频')
+        reject(new Error('解析窗口被关闭，未捕获到视频地址。请尝试：\n1. 延长等待时间\n2. 在浏览器中手动播放视频\n3. 检查网站是否需要登录'))
+      }
     })
 
     // 超时处理
     timeoutId = setTimeout(() => {
       if (!resolved) {
-        console.log('解析超时，返回已捕获的结果')
+        console.log(`解析超时 (${timeout}ms)，返回已捕获的结果`)
+        
+        // 通知主窗口
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('smart-parse:progress', {
+            status: 'timeout',
+            message: `解析超时，已捕获 ${capturedUrls.length} 个视频地址`
+          })
+        }
+        
         finishParse()
       }
     }, timeout)
 
     // 注入视频嗅探脚本（类似嗅探猫的技术）
     const injectSnifferScript = async () => {
+      // 检查窗口是否还存在
+      if (!smartParseWindow || smartParseWindow.isDestroyed()) {
+        return
+      }
+      
       try {
         await smartParseWindow.webContents.executeJavaScript(`
           (function() {
@@ -1065,6 +1219,11 @@ async function smartParse(url, options = {}) {
         reject(new Error(`无法加载页面: ${err.message}`))
       }
     })
+    
+    } catch (error) {
+      // 捕获同步错误
+      handleError(error)
+    }
   })
 }
 
@@ -1905,6 +2064,7 @@ app.whenReady().then(() => {
 
   // 历史记录
   ipcMain.handle('history:get', () => loadHistory())
+  ipcMain.handle('history:save', (_, history) => saveHistory(history))
   ipcMain.handle('history:clear', () => saveHistory([]))
 
   // 自定义规则

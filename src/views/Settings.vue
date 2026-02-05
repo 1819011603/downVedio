@@ -128,6 +128,24 @@
             />
           </div>
         </div>
+        
+        <div class="setting-item">
+          <div class="setting-info">
+            <label>完成后自动移除</label>
+            <p>下载完成后自动从队列移除的延迟时间（秒）</p>
+          </div>
+          <div class="setting-control">
+            <select class="input select" v-model.number="config.autoRemoveCompleted">
+              <option :value="-1">不自动移除</option>
+              <option :value="0">立即移除</option>
+              <option :value="3">3 秒后</option>
+              <option :value="5">5 秒后</option>
+              <option :value="10">10 秒后</option>
+              <option :value="30">30 秒后</option>
+              <option :value="60">1 分钟后</option>
+            </select>
+          </div>
+        </div>
       </section>
       
       <!-- 字幕与媒体 -->
@@ -643,7 +661,9 @@ const config = reactive({
   // 智能解析域名白名单
   smartParseDomains: [],
   // 智能解析视频格式过滤
-  smartParseFormats: ['m3u8']
+  smartParseFormats: ['m3u8'],
+  // 完成后自动移除时间（秒）
+  autoRemoveCompleted: -1
 })
 
 // 可选的视频格式

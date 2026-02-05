@@ -133,6 +133,36 @@
               <span class="meta-item format-tag">{{ getFormatLabel(task.format) }}</span>
             </div>
             
+            <!-- 时间信息 -->
+            <div class="task-time" v-if="task.startTime || task.completedTime || task.addedAt">
+              <span v-if="task.addedAt" class="time-item" :title="`添加时间: ${formatFullTime(task.addedAt)}`">
+                <svg viewBox="0 0 24 24" width="12" height="12">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" fill="none"/>
+                </svg>
+                添加: {{ formatRelativeTime(task.addedAt) }}
+              </span>
+              <span v-if="task.startTime" class="time-item" :title="`开始时间: ${formatFullTime(task.startTime)}`">
+                <svg viewBox="0 0 24 24" width="12" height="12">
+                  <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
+                </svg>
+                开始: {{ formatRelativeTime(task.startTime) }}
+              </span>
+              <span v-if="task.completedTime" class="time-item" :title="`完成时间: ${formatFullTime(task.completedTime)}`">
+                <svg viewBox="0 0 24 24" width="12" height="12">
+                  <polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2" fill="none"/>
+                </svg>
+                完成: {{ formatRelativeTime(task.completedTime) }}
+              </span>
+              <span v-if="task.startTime && task.completedTime" class="time-item time-duration">
+                <svg viewBox="0 0 24 24" width="12" height="12">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" fill="none"/>
+                </svg>
+                耗时: {{ formatDownloadDuration(task.startTime, task.completedTime) }}
+              </span>
+            </div>
+            
             <!-- 进度条 -->
             <div v-if="task.status === 'downloading'" class="task-progress">
               <div class="progress-bar">
@@ -349,6 +379,59 @@ const formatFileSize = (bytes) => {
     unitIndex++
   }
   return `${size.toFixed(1)}${units[unitIndex]}`
+}
+
+// 格式化完整时间
+const formatFullTime = (isoString) => {
+  if (!isoString) return ''
+  const date = new Date(isoString)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+// 格式化相对时间
+const formatRelativeTime = (isoString) => {
+  if (!isoString) return ''
+  const date = new Date(isoString)
+  const now = new Date()
+  const diff = Math.floor((now - date) / 1000) // 秒
+  
+  if (diff < 60) return `${diff}秒前`
+  if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`
+  if (diff < 2592000) return `${Math.floor(diff / 86400)}天前`
+  
+  // 超过30天显示具体日期
+  return date.toLocaleDateString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// 格式化下载耗时
+const formatDownloadDuration = (startTime, endTime) => {
+  if (!startTime || !endTime) return ''
+  const start = new Date(startTime)
+  const end = new Date(endTime)
+  const diff = Math.floor((end - start) / 1000) // 秒
+  
+  if (diff < 60) return `${diff}秒`
+  if (diff < 3600) {
+    const minutes = Math.floor(diff / 60)
+    const seconds = diff % 60
+    return `${minutes}分${seconds}秒`
+  }
+  const hours = Math.floor(diff / 3600)
+  const minutes = Math.floor((diff % 3600) / 60)
+  return `${hours}小时${minutes}分`
 }
 
 const getFormatLabel = (format) => {
@@ -770,6 +853,46 @@ const copyErrorInfo = async (task) => {
   padding: 2px 8px;
   background: var(--bg-dark);
   border-radius: var(--radius-sm);
+}
+
+.task-time {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: 4px;
+  
+  .time-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-sm);
+    cursor: help;
+    transition: all 0.2s;
+    
+    svg {
+      flex-shrink: 0;
+      opacity: 0.7;
+    }
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-secondary);
+    }
+    
+    &.time-duration {
+      color: var(--primary);
+      background: rgba(52, 152, 219, 0.1);
+      
+      &:hover {
+        background: rgba(52, 152, 219, 0.15);
+      }
+    }
+  }
 }
 
 .task-progress {

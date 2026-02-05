@@ -28,6 +28,7 @@ const api = {
   }),
   saveConfig: (config) => isElectron() ? window.electronAPI.saveConfig(config) : Promise.resolve(true),
   getHistory: () => isElectron() ? window.electronAPI.getHistory() : Promise.resolve([]),
+  saveHistory: (history) => isElectron() ? window.electronAPI.saveHistory(history) : Promise.resolve(true),
   clearHistory: () => isElectron() ? window.electronAPI.clearHistory() : Promise.resolve(),
   getRules: () => isElectron() ? window.electronAPI.getRules() : Promise.resolve([]),
   saveRules: (rules) => isElectron() ? window.electronAPI.saveRules(rules) : Promise.resolve(true),
@@ -72,7 +73,8 @@ export const useAppStore = defineStore('app', () => {
     audioQuality: '0',
     customArgs: '',
     smartParseDomains: [],  // 智能解析域名白名单
-    smartParseFormats: ['m3u8']  // 智能解析视频格式过滤
+    smartParseFormats: ['m3u8'],  // 智能解析视频格式过滤
+    autoRemoveCompleted: -1  // 完成后自动移除时间（秒），负数=不移除，0=立即移除
   })
   const history = ref([])
   const customRules = ref([])
@@ -280,12 +282,22 @@ export const useAppStore = defineStore('app', () => {
     // 开始下载
     task.status = 'downloading'
     task.progress = 0
+    task.startTime = new Date().toISOString()  // 记录开始时间
 
     try {
       await api.startDownload(plainTask)
       task.status = 'completed'
       task.progress = 100
+      task.completedTime = new Date().toISOString()  // 记录完成时间
       showToast(`下载完成: ${task.title}`, 'success')
+      
+      // 自动移除已完成任务
+      if (config.value.autoRemoveCompleted >= 0) {
+        const delay = config.value.autoRemoveCompleted * 1000
+        setTimeout(() => {
+          removeFromQueue(task.id, false)
+        }, delay)
+      }
     } catch (error) {
       task.status = 'error'
       task.error = error.message || String(error)
@@ -416,7 +428,45 @@ export const useAppStore = defineStore('app', () => {
         }
       }
       
+      // 保存到历史记录（只保存已完成的任务）
+      if (task && task.status === 'completed') {
+        await saveToHistory(task)
+      }
+      
       downloadQueue.value.splice(index, 1)
+    }
+  }
+  
+  // 保存任务到历史记录
+  async function saveToHistory(task) {
+    try {
+      const historyItem = {
+        id: task.id,
+        url: task.url,
+        title: task.title || '未知视频',
+        thumbnail: task.thumbnail,
+        uploader: task.uploader,
+        duration: task.duration,
+        resolution: task.resolution,
+        filesize: task.filesize,
+        format: task.format,
+        formatId: task.formatId,
+        addedAt: task.addedAt,
+        startTime: task.startTime,
+        completedTime: task.completedTime || new Date().toISOString(),
+        downloadPath: config.value.downloadPath
+      }
+      
+      // 添加到本地历史记录
+      history.value.unshift(historyItem)
+      
+      // 通过 IPC 保存到文件（如果有 API）
+      if (isElectronEnv.value && api.saveHistory) {
+        const plainHistory = JSON.parse(JSON.stringify(toRaw(history.value)))
+        await api.saveHistory(plainHistory)
+      }
+    } catch (error) {
+      console.error('保存历史记录失败:', error)
     }
   }
   

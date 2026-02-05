@@ -174,7 +174,7 @@ a {
     color: white;
     
     &:hover:not(:disabled) {
-      background: darken(#ff4757, 10%);
+      background: #e6303f;  // #ff4757 变暗 10%
     }
   }
   

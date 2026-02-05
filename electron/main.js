@@ -635,14 +635,25 @@ async function smartParse(url, options = {}) {
       const contentType = details.responseHeaders?.['content-type']?.[0] || 
                           details.responseHeaders?.['Content-Type']?.[0] || ''
       
-      // 获取文件大小（Content-Length）
-      const contentLength = details.responseHeaders?.['content-length']?.[0] || 
-                            details.responseHeaders?.['Content-Length']?.[0] || null
+      // 获取文件大小（Content-Length）- 尝试多种可能的响应头名称
+      let contentLength = null
+      if (details.responseHeaders) {
+        // 遍历响应头查找 content-length（不区分大小写）
+        for (const [key, value] of Object.entries(details.responseHeaders)) {
+          if (key.toLowerCase() === 'content-length' && value && value[0]) {
+            contentLength = value[0]
+            break
+          }
+        }
+      }
       
       // 如果已经捕获了这个 URL，更新其文件大小
       if (capturedUrls.includes(reqUrl) && contentLength && !capturedSizes[reqUrl]) {
-        capturedSizes[reqUrl] = parseInt(contentLength, 10)
-        console.log('📦 获取文件大小:', reqUrl.substring(0, 80), '大小:', capturedSizes[reqUrl])
+        const size = parseInt(contentLength, 10)
+        if (size > 0) {
+          capturedSizes[reqUrl] = size
+          console.log('📦 获取文件大小:', reqUrl.substring(0, 80), '大小:', size, '字节')
+        }
       }
       
       // 根据配置的格式，检测 Content-Type
@@ -683,10 +694,13 @@ async function smartParse(url, options = {}) {
           console.log('✅ 捕获视频响应:', reqUrl.substring(0, 200), '类型:', contentType)
           capturedUrls.push(reqUrl)
           
-          // 保存文件大小
+          // 保存文件大小（contentLength 已在前面获取）
           if (contentLength) {
-            capturedSizes[reqUrl] = parseInt(contentLength, 10)
-            console.log('📦 文件大小:', capturedSizes[reqUrl])
+            const size = parseInt(contentLength, 10)
+            if (size > 0) {
+              capturedSizes[reqUrl] = size
+              console.log('📦 文件大小:', size, '字节')
+            }
           }
           
           if (mainWindow) {
@@ -1073,10 +1087,11 @@ async function smartParse(url, options = {}) {
         if (sortedUrls.length > 0) {
           console.log('窗口关闭但已捕获到视频，返回结果')
           
-          // 构建带请求头的视频信息
+          // 构建带请求头和文件大小的视频信息
           const videoUrlsWithHeaders = sortedUrls.map(videoUrl => ({
             url: videoUrl,
-            headers: capturedHeaders[videoUrl] || {}
+            headers: capturedHeaders[videoUrl] || {},
+            size: capturedSizes[videoUrl] || null  // 文件大小（字节）
           }))
           
           resolve({
@@ -1567,14 +1582,34 @@ function downloadM3u8(task, onProgress) {
     }
     
     // 添加请求头（智能解析时捕获的请求头）
-    if (task.headers && Object.keys(task.headers).length > 0) {
-      console.log('使用捕获的请求头:', task.headers)
-      
-      // N_m3u8DL-RE 使用 -H 参数添加请求头
-      for (const [key, value] of Object.entries(task.headers)) {
-        if (value) {
-          args.push('-H', `${key}: ${value}`)
+    const headers = task.headers || {}
+    
+    // 确保有 Referer（很多 m3u8 服务器需要）
+    if (!headers['Referer'] && !headers['referer']) {
+      if (task.pageUrl) {
+        headers['Referer'] = task.pageUrl
+      } else {
+        // 从 m3u8 URL 提取域名作为 Referer
+        try {
+          const urlObj = new URL(task.url)
+          headers['Referer'] = `${urlObj.protocol}//${urlObj.host}/`
+        } catch (e) {
+          console.log('无法解析 URL 作为 Referer:', e.message)
         }
+      }
+    }
+    
+    // 确保有 User-Agent（避免被服务器拒绝）
+    if (!headers['User-Agent'] && !headers['user-agent']) {
+      headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    console.log('使用的请求头:', headers)
+    
+    // N_m3u8DL-RE 使用 -H 参数添加请求头
+    for (const [key, value] of Object.entries(headers)) {
+      if (value) {
+        args.push('-H', `${key}: ${value}`)
       }
     }
     
@@ -2190,12 +2225,27 @@ function isRetryableError(errorMessage) {
   return retryablePatterns.some(pattern => pattern.test(errorMessage))
 }
 
+// 检查是否是 N_m3u8DL-RE 不支持的错误（需要回退到 yt-dlp）
+function isM3u8FallbackError(errorMessage) {
+  const fallbackPatterns = [
+    /NotSupportedException/i,      // 编码不支持
+    /not supported/i,
+    /LoadSourceFromText/i,         // 解析 m3u8 内容失败
+    /StreamExtractor/i,            // 流提取器错误
+    /Invalid m3u8/i,
+    /Failed to parse/i,
+    /Unhandled exception/i         // 未处理的异常通常需要回退
+  ]
+  return fallbackPatterns.some(pattern => pattern.test(errorMessage))
+}
+
 // 带重试的下载函数
 async function downloadWithRetry(task, onProgress, maxRetries = 3, retryDelay = 3000) {
   let lastError = null
   
   // 检测是否是智能解析的 m3u8 URL，如果是则使用 N_m3u8DL-RE
-  const useM3u8Downloader = task.isSmartParse && isM3u8Url(task.url)
+  let useM3u8Downloader = task.isSmartParse && isM3u8Url(task.url)
+  let triedFallback = false  // 是否已尝试回退到 yt-dlp
   
   if (useM3u8Downloader) {
     console.log('检测到智能解析的 m3u8 URL，使用 N_m3u8DL-RE 下载')
@@ -2223,6 +2273,23 @@ async function downloadWithRetry(task, onProgress, maxRetries = 3, retryDelay = 
     } catch (error) {
       lastError = error
       console.error(`下载失败 (尝试 ${attempt}/${maxRetries}):`, error.message)
+      
+      // 如果是 N_m3u8DL-RE 不支持的错误，尝试回退到 yt-dlp
+      if (useM3u8Downloader && !triedFallback && isM3u8FallbackError(error.message)) {
+        console.log('N_m3u8DL-RE 不支持此格式，尝试使用 yt-dlp 作为备选')
+        triedFallback = true
+        useM3u8Downloader = false  // 切换到 yt-dlp
+        
+        onProgress({
+          taskId: task.id,
+          status: 'fallback',
+          output: 'N_m3u8DL-RE 不支持此格式，切换到 yt-dlp...'
+        })
+        
+        // 重置尝试次数，用 yt-dlp 重新开始
+        attempt = 0
+        continue
+      }
       
       // 检查是否为可重试的错误
       if (!isRetryableError(error.message)) {

@@ -338,6 +338,9 @@
                     <span class="source-size stream" v-else-if="isStreamingFormat(videoUrl)">
                       流媒体
                     </span>
+                    <span class="source-size unknown" v-else>
+                      大小未知
+                    </span>
                   </div>
                   <div class="source-url" :title="videoUrl">{{ videoUrl }}</div>
                 </div>
@@ -1480,8 +1483,15 @@ const getVideoSourceLabel = (videoUrl, index) => {
 
 // 获取指定索引视频的文件大小
 const getVideoSizeByIndex = (index) => {
-  if (!videoInfo.value?._videoUrlsWithHeaders) return null
-  const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders[index]
+  if (!videoInfo.value?._videoUrlsWithHeaders || !videoInfo.value?._allVideoUrls) return null
+  
+  // 通过 URL 匹配来获取大小（因为两个数组顺序可能不同）
+  const targetUrl = videoInfo.value._allVideoUrls[index]
+  if (!targetUrl) return null
+  
+  const urlWithHeaders = videoInfo.value._videoUrlsWithHeaders.find(
+    item => item.url === targetUrl
+  )
   return urlWithHeaders?.size || null
 }
 
@@ -2331,13 +2341,22 @@ const copyDownloadCommand = async () => {
   }
 }
 
-// 视频来源列表
+// 视频来源列表（可调整大小）
 .video-source-list {
-  max-height: 300px;
-  overflow-y: auto;
+  min-height: 100px;
+  max-height: 500px;
+  height: 200px;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-dark);
+  resize: both;  // 允许水平和垂直调整大小
+  
+  // 调整大小的拖拽手柄样式
+  &::-webkit-resizer {
+    background: linear-gradient(135deg, transparent 50%, var(--primary) 50%);
+    border-radius: 0 0 var(--radius-md) 0;
+  }
 }
 
 .video-source-item {
@@ -2417,6 +2436,11 @@ const copyDownloadCommand = async () => {
 .source-size.stream {
   color: var(--warning);
   background: rgba(245, 158, 11, 0.15);
+}
+
+.source-size.unknown {
+  color: var(--text-secondary);
+  background: rgba(128, 128, 128, 0.15);
 }
 
 .source-url {

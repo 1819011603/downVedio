@@ -438,8 +438,11 @@ const getDisplayTitle = (task) => {
 // 显示重命名对话框
 const showRenameDialog = async (task) => {
   try {
+    // 转换为普通对象，避免 IPC 序列化问题
+    const plainTask = JSON.parse(JSON.stringify(toRaw(task)))
+    
     // 获取文件路径
-    const result = await window.electronAPI.getDownloadedFilePath(task)
+    const result = await window.electronAPI.getDownloadedFilePath(plainTask)
     if (!result.success) {
       appStore.showToast(result.error || '找不到已下载的文件', 'error')
       return
@@ -688,7 +691,7 @@ const openVideo = async (task) => {
     const result = await appStore.api.getDownloadedPath(plainTask)
     console.log('查找结果:', result)
     
-    if (result.found) {
+    if (result.success) {
       console.log('正在打开文件:', result.path)
       const openResult = await appStore.api.openFile(result.path)
       console.log('打开结果:', openResult)
@@ -698,9 +701,14 @@ const openVideo = async (task) => {
         appStore.showToast('打开失败: ' + openResult.error, 'error')
       }
     } else {
-      console.log('文件未找到，打开目录:', result.path)
-      appStore.api.openPath(result.path)
-      appStore.showToast('文件未找到，已打开下载目录', 'warning')
+      console.error('文件未找到:', result.error)
+      const config = appStore.config
+      if (config.downloadPath) {
+        appStore.api.openPath(config.downloadPath)
+        appStore.showToast('文件未找到，已打开下载目录', 'warning')
+      } else {
+        appStore.showToast(result.error || '文件未找到', 'error')
+      }
     }
   } catch (e) {
     console.error('打开视频异常:', e)

@@ -52,8 +52,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkFileExists: (task) => ipcRenderer.invoke('file:checkExists', task),
   deleteFile: (filePath) => ipcRenderer.invoke('file:delete', filePath),
   getDownloadedPath: (task) => ipcRenderer.invoke('file:getDownloadedPath', task),
+  getDownloadedFilePath: (task) => ipcRenderer.invoke('file:getDownloadedPath', task),  // 别名
   openFile: (filePath) => ipcRenderer.invoke('shell:openFile', filePath),
   deleteVideoByTitle: (title) => ipcRenderer.invoke('file:deleteByTitle', title),
+  renameFile: (oldPath, newName) => ipcRenderer.invoke('file:rename', oldPath, newName),
   
   // m3u8 相关
   mergeM3u8: (taskTitle, saveName) => ipcRenderer.invoke('m3u8:merge', taskTitle, saveName),

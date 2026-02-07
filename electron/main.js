@@ -1336,14 +1336,171 @@ async function smartParse(url, options = {}) {
   })
 }
 
+// 获取 B站视频的合集信息
+async function getBilibiliCollectionInfo(bvid) {
+  return new Promise((resolve, reject) => {
+    const https = require('https')
+    const apiUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`
+    
+    https.get(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.bilibili.com/'
+      }
+    }, (res) => {
+      let data = ''
+      res.on('data', chunk => data += chunk)
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data)
+          if (json.code === 0 && json.data) {
+            const videoData = json.data
+            // 检查是否有合集信息 (ugc_season)
+            if (videoData.ugc_season && videoData.ugc_season.id) {
+              const season = videoData.ugc_season
+              const sections = season.sections || []
+              let episodes = []
+              
+              // 收集所有分集
+              sections.forEach(section => {
+                if (section.episodes) {
+                  episodes = episodes.concat(section.episodes)
+                }
+              })
+              
+              resolve({
+                hasCollection: true,
+                collectionId: season.id,
+                collectionTitle: season.title,
+                mid: videoData.owner?.mid,  // UP主 ID
+                episodes: episodes.map((ep, index) => ({
+                  bvid: ep.bvid,
+                  title: ep.title,
+                  arc: ep.arc,
+                  index: index + 1
+                })),
+                episodeCount: episodes.length
+              })
+            } else {
+              // 检查是否有多P
+              const pages = videoData.pages || []
+              if (pages.length > 1) {
+                resolve({
+                  hasCollection: false,
+                  hasMultiParts: true,
+                  pages: pages.map((p, index) => ({
+                    page: p.page,
+                    part: p.part,
+                    title: p.part || `P${p.page}`,
+                    duration: p.duration,
+                    index: index + 1
+                  })),
+                  pageCount: pages.length
+                })
+              } else {
+                resolve({
+                  hasCollection: false,
+                  hasMultiParts: false
+                })
+              }
+            }
+          } else {
+            resolve({
+              hasCollection: false,
+              hasMultiParts: false,
+              error: json.message || '获取视频信息失败'
+            })
+          }
+        } catch (e) {
+          console.error('解析 B站 API 响应失败:', e)
+          resolve({
+            hasCollection: false,
+            hasMultiParts: false,
+            error: e.message
+          })
+        }
+      })
+    }).on('error', (e) => {
+      console.error('请求 B站 API 失败:', e)
+      resolve({
+        hasCollection: false,
+        hasMultiParts: false,
+        error: e.message
+      })
+    })
+  })
+}
+
+// 从 B站 URL 提取 BV号
+function extractBilibiliId(url) {
+  // 匹配 BV 号: BV + 10位字母数字
+  const bvMatch = url.match(/BV[a-zA-Z0-9]{10}/i)
+  if (bvMatch) {
+    return bvMatch[0]
+  }
+  return null
+}
+
 // 解析视频信息
 async function parseVideoInfo(url, enablePlaylist = true) {
   const config = loadConfig()
   const matchedRule = findMatchingRule(url)
   
+  // B站合集特殊处理
+  const isBilibili = url.includes('bilibili.com') || url.includes('b23.tv')
+  
+  if (isBilibili && enablePlaylist) {
+    const bvid = extractBilibiliId(url)
+    if (bvid) {
+      console.log('检测到 B站视频，检查是否有合集...', bvid)
+      try {
+        const collectionInfo = await getBilibiliCollectionInfo(bvid)
+        console.log('B站合集信息:', JSON.stringify(collectionInfo, null, 2))
+        
+        // 如果是合集，直接使用 API 获取的信息构造结果
+        if (collectionInfo.hasCollection && collectionInfo.episodeCount > 1) {
+          console.log(`发现 B站合集: ${collectionInfo.collectionTitle}, 共 ${collectionInfo.episodeCount} 个视频`)
+          
+          // 直接使用 API 返回的合集信息，包含每个视频的真实标题
+          const playlistResult = collectionInfo.episodes.map((ep, index) => ({
+            title: ep.title || ep.arc?.title || `视频 ${index + 1}`,
+            url: `https://www.bilibili.com/video/${ep.bvid}`,
+            webpage_url: `https://www.bilibili.com/video/${ep.bvid}`,
+            id: ep.bvid,
+            thumbnail: ep.arc?.pic ? ep.arc.pic.replace('http://', 'https://') : null,
+            duration: ep.arc?.duration || 0,
+            uploader: ep.arc?.author?.name || collectionInfo.episodes[0]?.arc?.author?.name,
+            view_count: ep.arc?.stat?.view,
+            playlist_title: collectionInfo.collectionTitle,
+            playlist_index: index + 1
+          }))
+          
+          console.log('B站合集解析结果:', playlistResult.map(v => ({ title: v.title, id: v.id })))
+          
+          // 返回正确的格式：{ type: 'playlist', data: [...] }
+          return { type: 'playlist', data: playlistResult }
+        }
+        
+        // 如果是多P视频
+        if (collectionInfo.hasMultiParts && collectionInfo.pageCount > 1) {
+          console.log(`发现 B站多P视频, 共 ${collectionInfo.pageCount} P`)
+          // 多P视频 yt-dlp 可以直接处理，继续正常流程
+        }
+      } catch (e) {
+        console.error('获取 B站合集信息失败:', e)
+        // 失败后继续正常解析流程
+      }
+    }
+  }
+  
+  return parseVideoInfoInternal(url, enablePlaylist, config, matchedRule, isBilibili)
+}
+
+// 内部解析函数
+function parseVideoInfoInternal(url, enablePlaylist, config, matchedRule, isBilibili) {
   return new Promise((resolve, reject) => {
     // 判断是否为播放列表URL
-    const isPlaylistUrl = url.includes('list=') || url.includes('/playlist') || url.includes('channel')
+    const isPlaylistUrl = url.includes('list=') || url.includes('/playlist') || url.includes('channel') || url.includes('collectiondetail')
     
     const args = [
       '--dump-json',
@@ -1367,7 +1524,6 @@ async function parseVideoInfo(url, enablePlaylist = true) {
     }
 
     // Bilibili 特殊处理
-    const isBilibili = url.includes('bilibili.com') || url.includes('b23.tv')
     if (isBilibili) {
       args.push('--no-check-certificate')
     }
@@ -1943,13 +2099,37 @@ function downloadVideo(task, onProgress) {
   
   return new Promise((resolve, reject) => {
     // 生成文件名
-    let filename = config.namingTemplate
-      .replace('{title}', task.title || 'video')
-      .replace('{id}', task.id || '')
-      .replace('{index}', String(task.index || 1).padStart(2, '0'))
-      .replace('{uploader}', task.uploader || '')
-      .replace('{date}', new Date().toISOString().split('T')[0])
-      .replace('{ext}', '%(ext)s')
+    let filename
+    
+    // B站视频：如果标题是未知/默认值，使用 BV 号作为文件名
+    const isBilibiliUrl = task.url.includes('bilibili.com') || task.url.includes('b23.tv')
+    const needAutoTitle = !task.title || 
+      task.title === '未知' || 
+      task.title === '未知视频' ||
+      task.title === '未知标题' ||
+      task.title.startsWith('未知-') ||
+      task.title.startsWith('未知视频-') ||
+      task.title.startsWith('视频 ')  // 格式如 "视频 1", "视频 2"
+    
+    if (isBilibiliUrl && needAutoTitle) {
+      // 优先使用 task.videoId（解析时获取的 BV 号），否则从 URL 中提取
+      let bvId = task.videoId
+      if (!bvId || !bvId.startsWith('BV')) {
+        const bvMatch = task.url.match(/BV[a-zA-Z0-9]+/)
+        bvId = bvMatch ? bvMatch[0] : 'video'
+      }
+      filename = bvId
+      console.log('B站视频使用 BV 号作为文件名:', filename)
+    } else {
+      // 其他情况使用模板生成文件名
+      filename = config.namingTemplate
+        .replace('{title}', task.title || 'video')
+        .replace('{id}', task.id || '')
+        .replace('{index}', String(task.index || 1).padStart(2, '0'))
+        .replace('{uploader}', task.uploader || '')
+        .replace('{date}', new Date().toISOString().split('T')[0])
+        .replace('{ext}', '%(ext)s')
+    }
     
     // 清理非法字符
     filename = filename.replace(/[<>:"/\\|?*]/g, '_')
@@ -1960,7 +2140,10 @@ function downloadVideo(task, onProgress) {
       '-o', outputPath.includes('%(ext)s') ? outputPath : outputPath + '.%(ext)s',
       '--newline',
       '--progress',
-      '--no-colors'
+      '--no-colors',
+      '--no-part',  // 不使用 .part 临时文件，避免 Windows 文件占用问题
+      '--file-access-retries', '10',  // 文件访问重试次数
+      '--fragment-retries', '10'  // 分片重试次数
     ]
 
     // YouTube 需要 js-runtimes 来解密签名
@@ -1983,14 +2166,29 @@ function downloadVideo(task, onProgress) {
     const formatId = task.formatId
     const formatType = task.formatType || 'video'  // video, video-only, audio
     
+    // B站特殊处理 - 使用更兼容的格式选择（isBilibiliUrl 已在上面定义）
+    
     if (task.format === 'bestaudio' || formatType === 'audio') {
       // 仅音频 - 提取并转换
       args.push('-x')
       args.push('--audio-format', config.audioFormat || 'mp3')
       args.push('--audio-quality', config.audioQuality || '0')
     } else if (task.format && task.format.includes('[height<=')) {
-      // 分辨率限制格式（来自播放列表）- 直接使用格式字符串
-      args.push('-f', task.format)
+      // 分辨率限制格式（来自播放列表）
+      if (isBilibiliUrl) {
+        // B站：在分辨率限制基础上优先选择 AVC 编码，避免 AV1/HEVC 合并失败
+        // 例如：bestvideo[height<=1080] -> bestvideo[height<=1080][vcodec^=avc]
+        let formatStr = task.format
+        // 在第一个 bestvideo 后面添加 AVC 编码限制
+        formatStr = formatStr.replace(
+          /bestvideo(\[height<=\d+\])/,
+          'bestvideo$1[vcodec^=avc]/bestvideo$1'
+        )
+        args.push('-f', formatStr)
+        console.log('B站格式优化:', formatStr)
+      } else {
+        args.push('-f', task.format)
+      }
     } else if (task.format === 'bestvideo' || formatType === 'video-only') {
       // 仅视频（不合并音频）
       if (formatId && /^\d+$/.test(formatId)) {
@@ -2001,7 +2199,16 @@ function downloadVideo(task, onProgress) {
       }
     } else if (task.format === 'best' || formatType === 'video') {
       // 视频+音频 - 合并最佳视频和音频
-      if (formatId && /^\d+$/.test(formatId)) {
+      if (isBilibiliUrl) {
+        // B站特殊处理：优先选择 AVC 编码（兼容性更好）+ 最佳音频
+        // 避免 HEVC/AV1 编码导致的合并问题
+        if (formatId && /^\d+$/.test(formatId)) {
+          args.push('-f', `${formatId}+bestaudio/best`)
+        } else {
+          // 优先选择 AVC 编码的最佳视频，如果没有则回退到任意最佳
+          args.push('-f', 'bestvideo[vcodec^=avc]+bestaudio/bestvideo+bestaudio/best')
+        }
+      } else if (formatId && /^\d+$/.test(formatId)) {
         // 使用具体的格式ID + 最佳音频
         args.push('-f', `${formatId}+bestaudio/best`)
       } else if (task.format && task.format.includes('+')) {
@@ -2019,7 +2226,19 @@ function downloadVideo(task, onProgress) {
       }
     } else {
       // 默认：最佳质量
-      args.push('-f', 'bestvideo+bestaudio/best')
+      if (isBilibiliUrl) {
+        // B站：优先 AVC 编码
+        args.push('-f', 'bestvideo[vcodec^=avc]+bestaudio/bestvideo+bestaudio/best')
+      } else {
+        args.push('-f', 'bestvideo+bestaudio/best')
+      }
+    }
+    
+    // B站额外参数：确保合并成功
+    if (isBilibiliUrl) {
+      // 使用 FFmpeg 合并并转换为 MP4（确保兼容性）
+      args.push('--merge-output-format', 'mp4')
+      // 注意：不使用 --keep-video，合并后自动删除原始的音视频文件
     }
 
     // 字幕
@@ -2547,25 +2766,53 @@ app.whenReady().then(() => {
   // 获取下载文件的完整路径
   ipcMain.handle('file:getDownloadedPath', async (_, task) => {
     const config = loadConfig()
+    const downloadPath = config.downloadPath
     
-    let filename = config.namingTemplate
-      .replace('{title}', task.title || 'video')
-      .replace('{id}', task.id || '')
-      .replace('{index}', String(task.index || 1).padStart(2, '0'))
-      .replace('{uploader}', task.uploader || '')
-      .replace('{date}', new Date().toISOString().split('T')[0])
+    // B站视频：使用 BV 号或 videoId 作为文件名
+    const isBilibiliUrl = task.url && (task.url.includes('bilibili.com') || task.url.includes('b23.tv'))
+    const needAutoTitle = !task.title || 
+      task.title === '未知' || 
+      task.title === '未知视频' ||
+      task.title === '未知标题' ||
+      (task.title && task.title.startsWith('未知-')) ||
+      (task.title && task.title.startsWith('未知视频-')) ||
+      (task.title && task.title.startsWith('视频 '))
     
-    filename = filename.replace(/[<>:"/\\|?*]/g, '_')
+    let filename
+    if (isBilibiliUrl && needAutoTitle) {
+      // 优先使用 videoId（BV 号）
+      let bvId = task.videoId
+      if (!bvId || !bvId.startsWith('BV')) {
+        const bvMatch = task.url.match(/BV[a-zA-Z0-9]+/)
+        bvId = bvMatch ? bvMatch[0] : null
+      }
+      filename = bvId
+    }
+    
+    if (!filename) {
+      filename = config.namingTemplate
+        .replace('{title}', task.title || 'video')
+        .replace('{id}', task.id || '')
+        .replace('{index}', String(task.index || 1).padStart(2, '0'))
+        .replace('{uploader}', task.uploader || '')
+        .replace('{date}', new Date().toISOString().split('T')[0])
+      
+      filename = filename.replace(/[<>:"/\\|?*]/g, '_')
+    }
     
     const extensions = ['mp4', 'mkv', 'webm', 'mp3', 'm4a', 'flv', 'avi', 'mov']
-    const downloadPath = config.downloadPath
     
     // 首先尝试精确匹配
     for (const ext of extensions) {
       const fullPath = path.join(downloadPath, `${filename}.${ext}`)
       if (fs.existsSync(fullPath)) {
-        return { found: true, path: fullPath }
+        return { success: true, path: fullPath }
       }
+    }
+    
+    // 如果有重命名后的路径，尝试使用它
+    if (task.renamedPath && fs.existsSync(task.renamedPath)) {
+      return { success: true, path: task.renamedPath }
     }
     
     // 如果精确匹配失败，尝试模糊匹配（文件名可能包含时间戳后缀）
@@ -2580,25 +2827,49 @@ app.whenReady().then(() => {
         }))
         .sort((a, b) => b.mtime - a.mtime)
       
-      // 查找包含标题的文件
-      const titleBase = (task.title || 'video').replace(/[<>:"/\\|?*]/g, '_')
-      for (const file of sortedFiles) {
-        if (file.name.includes(titleBase) && extensions.some(ext => file.name.endsWith(`.${ext}`))) {
-          return { found: true, path: file.path }
-        }
-      }
+      // 查找包含标题或 BV 号的文件
+      const searchTerms = [filename]
+      if (task.videoId) searchTerms.push(task.videoId)
+      if (task.title) searchTerms.push(task.title.replace(/[<>:"/\\|?*]/g, '_'))
       
-      // 如果标题匹配失败，返回最近下载的视频文件
       for (const file of sortedFiles) {
-        if (extensions.some(ext => file.name.endsWith(`.${ext}`))) {
-          return { found: true, path: file.path }
+        for (const term of searchTerms) {
+          if (term && file.name.includes(term) && extensions.some(ext => file.name.endsWith(`.${ext}`))) {
+            return { success: true, path: file.path }
+          }
         }
       }
     } catch (e) {
       console.error('搜索下载文件失败:', e)
     }
     
-    return { found: false, path: downloadPath }
+    return { success: false, error: '找不到已下载的文件' }
+  })
+
+  // 重命名文件
+  ipcMain.handle('file:rename', async (_, oldPath, newName) => {
+    try {
+      if (!fs.existsSync(oldPath)) {
+        return { success: false, error: '文件不存在' }
+      }
+      
+      const dir = path.dirname(oldPath)
+      const newPath = path.join(dir, newName)
+      
+      // 检查新文件名是否已存在
+      if (fs.existsSync(newPath)) {
+        return { success: false, error: '目标文件名已存在' }
+      }
+      
+      // 重命名文件
+      fs.renameSync(oldPath, newPath)
+      console.log('文件重命名成功:', oldPath, '->', newPath)
+      
+      return { success: true, newPath: newPath }
+    } catch (error) {
+      console.error('重命名文件失败:', error)
+      return { success: false, error: error.message }
+    }
   })
 
   // 使用默认应用打开文件

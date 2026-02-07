@@ -1351,6 +1351,13 @@ const addToDownload = () => {
     downloadHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   }
   
+  // 提取 B站 BV 号
+  let videoId = null
+  if (downloadUrl.includes('bilibili.com') || downloadUrl.includes('b23.tv')) {
+    const bvMatch = downloadUrl.match(/BV[a-zA-Z0-9]+/)
+    if (bvMatch) videoId = bvMatch[0]
+  }
+  
   appStore.addToQueue({
     url: downloadUrl,
     title: videoInfo.value.title,
@@ -1364,7 +1371,8 @@ const addToDownload = () => {
     filesize: formatInfo ? getFileSize(formatInfo) : 0,
     isSmartParse: isSmartParseResult,  // 标记是否来自智能解析
     pageUrl: pageUrl,  // 保存来源页面 URL（用于 Referer）
-    headers: downloadHeaders  // 保存请求头（用于下载时使用）
+    headers: downloadHeaders,  // 保存请求头（用于下载时使用）
+    videoId: videoId  // B站视频的 BV 号
   })
   
   appStore.showToast('已添加到下载队列', 'success')
@@ -1417,7 +1425,8 @@ const addSelectedToDownload = () => {
       formatType: formatType.value,  // 保存格式类型
       resolution: resolutionLabel,
       maxHeight: itemResolution,
-      index: index + 1
+      index: index + 1,
+      videoId: item.id  // B站视频的 BV 号（与任务 id 区分）
     }
   })
   
@@ -1627,6 +1636,14 @@ const batchDownloadVideos = () => {
       ? `${baseTitle}-${index + 1}`
       : baseTitle
     
+    // 提取 B站 BV 号（从视频 URL 或页面 URL）
+    let videoId = null
+    const urlToCheck = videoUrl || url.value
+    if (urlToCheck && (urlToCheck.includes('bilibili.com') || urlToCheck.includes('b23.tv'))) {
+      const bvMatch = urlToCheck.match(/BV[a-zA-Z0-9]+/)
+      if (bvMatch) videoId = bvMatch[0]
+    }
+    
     return {
       url: videoUrl,
       title: taskTitle,
@@ -1639,7 +1656,8 @@ const batchDownloadVideos = () => {
       isSmartParse: isSmartParseResult,
       pageUrl: isSmartParseResult ? url.value : null,
       headers: downloadHeaders,
-      index: index + 1  // 使用原始列表中的序号
+      index: index + 1,  // 使用原始列表中的序号
+      videoId: videoId  // B站视频的 BV 号
     }
   })
   

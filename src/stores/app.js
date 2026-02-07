@@ -94,13 +94,12 @@ export const useAppStore = defineStore('app', () => {
     selectedItems: []
   })
   
-  // 文件存在弹窗状态
+  // 文件存在弹窗状态（resolve 不再存储在响应式对象中）
   const fileExistsDialog = ref({
     visible: false,
     filename: '',
     fullPath: '',
-    taskId: null,
-    resolve: null
+    taskId: null
   })
   
   // 删除确认弹窗状态
@@ -122,37 +121,71 @@ export const useAppStore = defineStore('app', () => {
 
   // 初始化
   async function init() {
+    console.log('[Queue] ========== init() 开始执行 ==========')
+    
     isElectronEnv.value = isElectron()
+    console.log('[Queue] isElectronEnv:', isElectronEnv.value)
     
     if (!isElectronEnv.value) {
       showToast('请使用 npm run electron:dev 启动应用', 'warning')
+      console.log('[Queue] 非 Electron 环境，退出 init()')
       return
     }
     
     try {
+      console.log('[Queue] 开始检查 yt-dlp...')
       // 检查 yt-dlp
       const result = await api.checkYtdlp()
       ytdlpInstalled.value = result.installed
       ytdlpVersion.value = result.version
+      console.log('[Queue] yt-dlp 检查完成:', result.installed)
 
+      console.log('[Queue] 开始加载配置...')
       // 加载配置
       config.value = await api.getConfig()
+      console.log('[Queue] 配置加载完成')
 
+      console.log('[Queue] 开始加载历史记录...')
       // 加载历史记录
       history.value = await api.getHistory()
+      console.log('[Queue] 历史记录加载完成')
 
+      console.log('[Queue] 开始加载自定义规则...')
       // 加载自定义规则
       customRules.value = await api.getRules()
+      console.log('[Queue] 自定义规则加载完成')
 
+      console.log('[Queue] 开始监听下载进度...')
       // 监听下载进度
       api.onDownloadProgress((data) => {
         updateTaskProgress(data)
       })
+      console.log('[Queue] 下载进度监听已设置')
+
+      // 启动定期检查卡住任务的定时器（每3秒检查一次）
+      console.log('[Queue] ========== 准备启动定时器 ==========')
+      const timerId = setInterval(() => {
+        console.log('[Queue] 定时检查运行中...', new Date().toLocaleTimeString())
+        
+        const preparingTasks = downloadQueue.value.filter(t => t.status === 'preparing')
+        if (preparingTasks.length > 0) {
+          console.log('[Queue] 发现', preparingTasks.length, '个 preparing 任务')
+          console.log('[Queue] _preparingTasks:', Array.from(_preparingTasks.entries()))
+          console.log('[Queue] _waitingForDialog:', _waitingForDialog ? _waitingForDialog.task.id : 'null')
+          console.log('[Queue] _isProcessing:', _isProcessing)
+        }
+        
+        _recoverStuckTasks()
+      }, 3000)
+      console.log('[Queue] ========== 定时器已启动，ID:', timerId, '==========')
 
       if (!result.installed) {
         showToast('未检测到 yt-dlp，请先安装', 'warning')
       }
+      
+      console.log('[Queue] ========== init() 执行完成 ==========')
     } catch (error) {
+      console.error('[Queue] init() 执行出错:', error)
       showToast('初始化失败: ' + error.message, 'error')
     }
   }
@@ -213,127 +246,294 @@ export const useAppStore = defineStore('app', () => {
     processQueue()
   }
 
-  // 处理下载队列 - 支持并行下载
+  // ============================================================
+  // 队列处理 - 每个任务独立检查，检查完立即启动
+  // 流程：取一个任务 → 检查文件 → 弹窗（如需要）→ 启动下载 → 取下一个
+  // ============================================================
+  
+  // 当前正在等待弹窗的任务（一次只能有一个）
+  let _waitingForDialog = null  // { task, plainTask, checkResult }
+  let _isProcessing = false      // 防止 processQueue 重入
+  const _preparingTasks = new Map() // taskId -> timestamp，记录 preparing 状态的任务和时间
+  
+  // 处理下载队列入口
   function processQueue() {
-    // 检查是否有正在下载的任务（包括 downloading 和 preparing 状态）
-    const activeCount = downloadQueue.value.filter(t => 
-      t.status === 'downloading' || t.status === 'preparing'
-    ).length
-    const availableSlots = config.value.concurrentDownloads - activeCount
-    
-    if (availableSlots <= 0) {
+    // 防止重入
+    if (_isProcessing) {
+      console.log('[Queue] processQueue 正在执行，跳过')
       return
     }
-
-    // 获取所有待下载任务
-    const pendingTasks = downloadQueue.value.filter(t => t.status === 'pending')
-    if (pendingTasks.length === 0) {
+    
+    // 如果有弹窗在等待用户操作，不处理新任务
+    if (_waitingForDialog) {
+      console.log('[Queue] 有弹窗在等待，跳过')
       return
     }
-
-    // 启动多个下载任务（不超过可用槽位数）
-    const tasksToStart = pendingTasks.slice(0, availableSlots)
     
-    for (const task of tasksToStart) {
-      // 立即设置状态为 preparing，防止重复启动
-      task.status = 'preparing'
-      // 异步启动下载，不等待完成
-      startDownloadTask(task)
-    }
-  }
-  
-  // 启动单个下载任务
-  async function startDownloadTask(task) {
-    // 检查文件是否已存在
-    let plainTask = JSON.parse(JSON.stringify(toRaw(task)))
+    // 检查是否有卡住的 preparing 任务（超过5秒）
+    _recoverStuckTasks()
+    
+    _isProcessing = true
     
     try {
-      const checkResult = await api.checkFileExists(plainTask)
-      if (checkResult.exists) {
-        // 显示弹窗让用户选择
-        const userChoice = await showFileExistsDialog(checkResult.filename, checkResult.fullPath, task.id)
-        
-        if (userChoice === 'cancel') {
-          task.status = 'cancelled'
-          task.error = '用户取消：文件已存在'
-          processQueue()  // 继续处理队列
-          return
-        } else if (userChoice === 'overwrite') {
-          // 删除已存在的文件
-          const deleteResult = await api.deleteFile(checkResult.fullPath)
-          if (!deleteResult.success) {
-            task.status = 'error'
-            task.error = `无法删除已存在的文件: ${deleteResult.error}`
-            processQueue()
-            return
-          }
-        } else if (userChoice === 'saveAs') {
-          // 修改文件名添加时间戳
-          const timestamp = Date.now()
-          task.title = `${task.title}_${timestamp}`
-        }
-        // 重新生成 plainTask（更新后的标题）
-        plainTask = JSON.parse(JSON.stringify(toRaw(task)))
-      }
-    } catch (error) {
-      console.error('检查文件存在失败:', error)
-    }
-
-    // 开始下载
-    task.status = 'downloading'
-    task.progress = 0
-    task.startTime = new Date().toISOString()  // 记录开始时间
-
-    try {
-      await api.startDownload(plainTask)
-      task.status = 'completed'
-      task.progress = 100
-      task.completedTime = new Date().toISOString()  // 记录完成时间
-      showToast(`下载完成: ${task.title}`, 'success')
+      // 计算当前正在下载和准备中的任务数
+      const downloadingCount = downloadQueue.value.filter(t => 
+        t.status === 'downloading'
+      ).length
+      const preparingCount = downloadQueue.value.filter(t => 
+        t.status === 'preparing'
+      ).length
+      const activeCount = downloadingCount + preparingCount
+      const availableSlots = config.value.concurrentDownloads - activeCount
       
-      // 自动移除已完成任务
-      if (config.value.autoRemoveCompleted >= 0) {
-        const delay = config.value.autoRemoveCompleted * 1000
-        setTimeout(() => {
-          removeFromQueue(task.id, false)
-        }, delay)
+      console.log('[Queue] downloading:', downloadingCount, 'preparing:', preparingCount, 'slots:', availableSlots)
+      
+      if (availableSlots <= 0) {
+        _isProcessing = false
+        return
       }
-    } catch (error) {
-      task.status = 'error'
-      task.error = error.message || String(error)
-      task.errorTime = new Date().toISOString()
-      showToast(`下载失败: ${task.title}`, 'error')
+      
+      // 获取待处理的任务（pending + 卡住的 preparing）
+      const pendingTasks = downloadQueue.value.filter(t => t.status === 'pending')
+      const stuckTasks = downloadQueue.value.filter(t => 
+        t.status === 'preparing' && 
+        _preparingTasks.has(t.id) &&
+        Date.now() - _preparingTasks.get(t.id) > 5000
+      )
+      
+      // 优先处理卡住的任务，然后是 pending 任务
+      const nextTask = stuckTasks[0] || pendingTasks[0]
+      
+      if (!nextTask) {
+        _isProcessing = false
+        return
+      }
+      
+      console.log('[Queue] 准备处理任务:', nextTask.title || nextTask.url)
+      
+      // 只将当前任务标记为 preparing
+      if (nextTask.status !== 'preparing') {
+        nextTask.status = 'preparing'
+      }
+      _preparingTasks.set(nextTask.id, Date.now())
+      
+      _isProcessing = false
+      
+      // 开始检查任务
+      _checkAndStartTask(nextTask)
+    } finally {
+      // 注意：_isProcessing 在设置完状态后就重置了
     }
-
-    // 继续处理队列（启动新的下载任务）
-    processQueue()
   }
   
-  // 显示文件存在弹窗
-  function showFileExistsDialog(filename, fullPath, taskId) {
-    return new Promise((resolve) => {
-      fileExistsDialog.value = {
-        visible: true,
-        filename,
-        fullPath,
-        taskId,
-        resolve
+  // 恢复卡住的任务（独立运行，不依赖 _isProcessing 和 _waitingForDialog）
+  function _recoverStuckTasks() {
+    const now = Date.now()
+    
+    // 查找所有 preparing 状态的任务
+    const preparingTasks = downloadQueue.value.filter(t => t.status === 'preparing')
+    
+    if (preparingTasks.length === 0) return
+    
+    // 检查哪些任务卡住了（超过5秒，或者没有时间戳记录但状态是 preparing）
+    const stuckTasks = preparingTasks.filter(task => {
+      if (!_preparingTasks.has(task.id)) {
+        // 没有时间戳记录，说明可能是在某个地方被标记为 preparing 但没有正确记录
+        // 这种情况也视为卡住
+        console.warn('[Queue] 发现没有时间戳记录的 preparing 任务:', task.id)
+        return true
       }
+      const elapsed = now - _preparingTasks.get(task.id)
+      return elapsed > 5000
+    })
+    
+    if (stuckTasks.length > 0) {
+      console.warn('[Queue] 发现', stuckTasks.length, '个卡住的任务，强制恢复')
+      
+      for (const task of stuckTasks) {
+        console.log('[Queue] 恢复任务:', task.id, task.title || task.url)
+        
+        // 如果这个任务正在等待弹窗，先清除弹窗状态
+        if (_waitingForDialog && _waitingForDialog.task.id === task.id) {
+          console.log('[Queue] 清除卡住的弹窗状态')
+          _waitingForDialog = null
+          fileExistsDialog.value = {
+            visible: false,
+            filename: '',
+            fullPath: '',
+            taskId: null
+          }
+        }
+        
+        // 重置处理标志（如果这个任务导致卡住）
+        if (_isProcessing) {
+          console.log('[Queue] 重置处理标志')
+          _isProcessing = false
+        }
+        
+        // 更新时间戳并重新检查文件
+        _preparingTasks.set(task.id, Date.now())
+        _checkAndStartTask(task)
+      }
+    }
+  }
+  
+  // 检查文件并启动任务
+  function _checkAndStartTask(task) {
+    const plainTask = JSON.parse(JSON.stringify(toRaw(task)))
+    
+    console.log('[Queue] 检查文件:', task.title || task.url, 'taskId:', task.id)
+    
+    // 添加超时保护（10秒）
+    const timeoutId = setTimeout(() => {
+      console.error('[Queue] 检查文件超时:', task.id, task.title || task.url)
+      // 超时后不清除 preparing 记录，让恢复机制处理
+      _isProcessing = false
+    }, 10000)
+    
+    api.checkFileExists(plainTask).then(checkResult => {
+      clearTimeout(timeoutId)
+      
+      // 清除 preparing 记录
+      _preparingTasks.delete(task.id)
+      
+      if (checkResult.exists) {
+        // 文件存在，弹窗让用户选择
+        console.log('[Queue] 文件已存在，弹窗:', checkResult.filename)
+        _waitingForDialog = { task, plainTask, checkResult }
+        fileExistsDialog.value = {
+          visible: true,
+          filename: checkResult.filename,
+          fullPath: checkResult.fullPath,
+          taskId: task.id
+        }
+        // 等待 handleFileExistsChoice 被调用，不继续
+        _isProcessing = false
+      } else {
+        // 文件不存在，直接启动下载
+        console.log('[Queue] 文件不存在，直接启动下载')
+        _isProcessing = false
+        _startDownload(task, plainTask)
+        // 启动后立即检查下一个任务
+        setTimeout(() => processQueue(), 0)
+      }
+    }).catch(error => {
+      clearTimeout(timeoutId)
+      console.error('[Queue] 检查文件失败:', error)
+      // 清除 preparing 记录
+      _preparingTasks.delete(task.id)
+      // 出错也直接启动下载
+      _isProcessing = false
+      _startDownload(task, plainTask)
+      setTimeout(() => processQueue(), 0)
     })
   }
   
-  // 处理文件存在弹窗的选择
+  // 处理文件存在弹窗的选择（由 UI 回调调用）
   function handleFileExistsChoice(choice) {
-    if (fileExistsDialog.value.resolve) {
-      fileExistsDialog.value.resolve(choice)
-    }
+    console.log('[Queue] 用户选择:', choice)
+    
+    // 关闭弹窗
     fileExistsDialog.value = {
       visible: false,
       filename: '',
       fullPath: '',
-      taskId: null,
-      resolve: null
+      taskId: null
     }
+    
+    const dialogData = _waitingForDialog
+    _waitingForDialog = null
+    
+    if (!dialogData) {
+      console.error('[Queue] handleFileExistsChoice: 没有等待中的任务!')
+      _isProcessing = false
+      return
+    }
+    
+    const { task, plainTask, checkResult } = dialogData
+    
+    // 清除 preparing 记录
+    _preparingTasks.delete(task.id)
+    
+    if (choice === 'cancel') {
+      task.status = 'cancelled'
+      task.error = '用户取消：文件已存在'
+      console.log('[Queue] 任务已取消:', task.id)
+      _isProcessing = false
+      // 继续处理下一个任务
+      setTimeout(() => processQueue(), 100)
+      
+    } else if (choice === 'overwrite') {
+      // 先删除文件
+      api.deleteFile(checkResult.fullPath).then(deleteResult => {
+        _isProcessing = false
+        if (deleteResult.success) {
+          console.log('[Queue] 文件已删除，启动下载')
+          _startDownload(task, plainTask)
+          setTimeout(() => processQueue(), 0)
+        } else {
+          task.status = 'error'
+          task.error = `无法删除已存在的文件: ${deleteResult.error}`
+          console.log('[Queue] 删除文件失败')
+          setTimeout(() => processQueue(), 100)
+        }
+      }).catch(err => {
+        _isProcessing = false
+        task.status = 'error'
+        task.error = `删除文件失败: ${err.message}`
+        setTimeout(() => processQueue(), 100)
+      })
+      
+    } else if (choice === 'saveAs') {
+      const timestamp = Date.now()
+      task.title = `${task.title}_${timestamp}`
+      const newPlainTask = JSON.parse(JSON.stringify(toRaw(task)))
+      console.log('[Queue] 另存为，启动下载')
+      _isProcessing = false
+      _startDownload(task, newPlainTask)
+      setTimeout(() => processQueue(), 0)
+    }
+  }
+  
+  // 启动单个任务的下载
+  function _startDownload(task, plainTask) {
+    // 清除 preparing 记录
+    _preparingTasks.delete(task.id)
+    
+    // 再次确认任务状态
+    if (task.status !== 'preparing') {
+      console.log('[Queue] 任务', task.id, '状态已变化，跳过下载')
+      return
+    }
+    
+    task.status = 'downloading'
+    task.progress = 0
+    task.startTime = new Date().toISOString()
+    
+    console.log('[Queue] 启动下载:', task.title || task.url)
+    
+    api.startDownload(plainTask).then(() => {
+      task.status = 'completed'
+      task.progress = 100
+      task.completedTime = new Date().toISOString()
+      showToast(`下载完成: ${task.title}`, 'success')
+      
+      if (config.value.autoRemoveCompleted >= 0) {
+        const delay = config.value.autoRemoveCompleted * 1000
+        setTimeout(() => removeFromQueue(task.id, false), delay)
+      }
+      
+      // 下载完成，尝试启动队列中的下一个任务
+      processQueue()
+    }).catch(error => {
+      task.status = 'error'
+      task.error = error.message || String(error)
+      task.errorTime = new Date().toISOString()
+      showToast(`下载失败: ${task.title}`, 'error')
+      
+      // 下载失败，也尝试启动下一个任务
+      processQueue()
+    })
   }
 
   // 更新任务进度

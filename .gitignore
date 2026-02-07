@@ -34,3 +34,4 @@ resources/yt-dlp
 
 # User data (development)
 userData/
+dist-electron/

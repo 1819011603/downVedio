@@ -1,5 +1,41 @@
 <template>
   <div class="queue-view">
+    <!-- 重命名对话框 -->
+    <Teleport to="body">
+      <div v-if="renameDialog.visible" class="modal-overlay" @click.self="cancelRename">
+        <div class="rename-dialog animate-fadeIn">
+          <div class="dialog-header">
+            <svg viewBox="0 0 24 24" width="24" height="24" class="dialog-icon">
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            <h3>重命名文件</h3>
+          </div>
+          <div class="dialog-content">
+            <p class="rename-hint">当前文件：{{ renameDialog.oldName }}</p>
+            <div class="rename-input-wrapper">
+              <input 
+                type="text" 
+                class="input rename-input" 
+                v-model="renameDialog.newName"
+                @keyup.enter="confirmRename"
+                placeholder="输入新文件名（不含扩展名）"
+                ref="renameInput"
+              />
+              <span class="rename-ext">.{{ renameDialog.ext }}</span>
+            </div>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="cancelRename">
+              取消
+            </button>
+            <button class="btn btn-primary" @click="confirmRename" :disabled="!renameDialog.newName.trim()">
+              确认重命名
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    
     <!-- 删除确认弹窗 -->
     <Teleport to="body">
       <div v-if="appStore.deleteConfirmDialog.visible" class="modal-overlay" @click.self="handleDeleteCancel">
@@ -124,7 +160,7 @@
           
           <!-- 信息区 -->
           <div class="task-info">
-            <h3 class="task-title">{{ task.title || '未知视频' }}</h3>
+            <h3 class="task-title">{{ getDisplayTitle(task) }}</h3>
             <div class="task-meta">
               <span v-if="task.uploader" class="meta-item">{{ task.uploader }}</span>
               <span v-if="task.duration" class="meta-item">{{ formatDuration(task.duration) }}</span>
@@ -281,6 +317,14 @@
               </svg>
             </button>
             
+            <!-- 已完成：重命名文件 -->
+            <button v-if="task.status === 'completed'" class="btn btn-icon btn-rename" @click="showRenameDialog(task)" title="重命名文件">
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+            
             <!-- 下载中：暂停 -->
             <button v-if="task.status === 'downloading'" class="btn btn-icon" @click="pauseTask(task.id)" title="暂停">
               <svg viewBox="0 0 24 24" width="18" height="18">
@@ -374,6 +418,97 @@ import { useAppStore } from '@/stores/app'
 const router = useRouter()
 const appStore = useAppStore()
 const copiedTaskId = ref(null)
+const renameInput = ref(null)
+
+// 重命名对话框状态
+const renameDialog = ref({
+  visible: false,
+  taskId: null,
+  oldName: '',
+  newName: '',
+  ext: '',
+  fullPath: ''
+})
+
+// 获取显示标题（直接显示任务标题）
+const getDisplayTitle = (task) => {
+  return task.title || '未知视频'
+}
+
+// 显示重命名对话框
+const showRenameDialog = async (task) => {
+  try {
+    // 获取文件路径
+    const result = await window.electronAPI.getDownloadedFilePath(task)
+    if (!result.success) {
+      appStore.showToast(result.error || '找不到已下载的文件', 'error')
+      return
+    }
+    
+    const fullPath = result.path
+    const fileName = fullPath.split(/[/\\]/).pop()
+    const lastDot = fileName.lastIndexOf('.')
+    const name = lastDot > 0 ? fileName.substring(0, lastDot) : fileName
+    const ext = lastDot > 0 ? fileName.substring(lastDot + 1) : ''
+    
+    renameDialog.value = {
+      visible: true,
+      taskId: task.id,
+      oldName: fileName,
+      newName: name,
+      ext: ext,
+      fullPath: fullPath
+    }
+    
+    // 聚焦输入框
+    setTimeout(() => {
+      if (renameInput.value) {
+        renameInput.value.focus()
+        renameInput.value.select()
+      }
+    }, 100)
+  } catch (error) {
+    appStore.showToast('获取文件信息失败: ' + error.message, 'error')
+  }
+}
+
+// 确认重命名
+const confirmRename = async () => {
+  const newName = renameDialog.value.newName.trim()
+  if (!newName) return
+  
+  try {
+    const newFullName = `${newName}.${renameDialog.value.ext}`
+    const result = await window.electronAPI.renameFile(renameDialog.value.fullPath, newFullName)
+    
+    if (result.success) {
+      // 更新任务标题
+      const task = appStore.downloadQueue.find(t => t.id === renameDialog.value.taskId)
+      if (task) {
+        task.title = newName
+        task.renamedPath = result.newPath
+      }
+      appStore.showToast('文件重命名成功', 'success')
+      cancelRename()
+    } else {
+      appStore.showToast(result.error || '重命名失败', 'error')
+    }
+  } catch (error) {
+    appStore.showToast('重命名失败: ' + error.message, 'error')
+  }
+}
+
+// 取消重命名
+const cancelRename = () => {
+  renameDialog.value = {
+    visible: false,
+    taskId: null,
+    oldName: '',
+    newName: '',
+    ext: '',
+    fullPath: ''
+  }
+}
 
 const formatDuration = (seconds) => {
   if (!seconds) return ''
@@ -1166,6 +1301,14 @@ const copyErrorInfo = async (task) => {
       }
     }
     
+    &.btn-rename {
+      color: var(--primary);
+      
+      &:hover {
+        background: rgba(0, 212, 170, 0.15);
+      }
+    }
+    
     &.btn-danger {
       color: var(--error);
       
@@ -1292,6 +1435,49 @@ const copyErrorInfo = async (task) => {
     
     &:hover {
       background: #e63946;
+    }
+  }
+}
+
+// 重命名对话框
+.rename-dialog {
+  width: 480px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  
+  .dialog-header {
+    background: rgba(0, 212, 170, 0.1);
+    
+    .dialog-icon {
+      color: var(--primary);
+    }
+  }
+  
+  .rename-hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-md);
+    word-break: break-all;
+  }
+  
+  .rename-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    
+    .rename-input {
+      flex: 1;
+      padding: var(--spacing-sm) var(--spacing-md);
+      font-size: 15px;
+    }
+    
+    .rename-ext {
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 500;
     }
   }
 }
